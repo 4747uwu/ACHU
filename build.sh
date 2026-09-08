@@ -88,16 +88,22 @@ size_of() {
 explain_toolchain() {
   grep -q "updates to go.mod needed" "$TMPERR" 2>/dev/null || return 0
   warn "That is a toolchain mismatch, not a code error."
-  warn "This module targets 'go 1.20'; yours is $GO_VER."
-  warn "Install Go 1.20.x:  go install golang.org/dl/go1.20.14@latest"
-  warn "Do NOT run 'go mod tidy' to silence it -- that would also move the"
-  warn "Windows build off go1.20.14, which Windows 7 sites still need."
+  warn "Your Go is $GO_VER and it wants go.mod changed."
+  warn ""
+  warn "Check what it wants first:  go mod tidy -diff"
+  warn "If it only adds go.sum entries, that is safe. If it raises the 'go'"
+  warn "directive, verify go1.20.14 still builds afterwards -- the Windows"
+  warn "engine must keep working for the Windows 7 sites in the field."
 }
 
 # --- prerequisites ----------------------------------------------------------
 
-command -v go >/dev/null || die "go not found. Install from https://go.dev/dl/"
-GO_VER=$(go env GOVERSION)
+# GO_BIN lets one machine build both platforms: the Windows engine needs Go
+# 1.20.x for Windows 7, while macOS is happy on anything current.
+#   GO_BIN=$(go env GOPATH)/bin/go1.20.14 ./build.sh --target win
+GO="${GO_BIN:-go}"
+command -v "$GO" >/dev/null || die "$GO not found. Install from https://go.dev/dl/"
+GO_VER=$("$GO" env GOVERSION)
 
 # Version comes from package.json so the installer, the About screen and the
 # binary can never disagree about what this build is.
@@ -125,6 +131,11 @@ fi
 PRODUCT=$(node -p "require('./package.json').build.productName")
 echo "    product   : $PRODUCT"
 
+# The engine's filename must match in main.js and in BOTH bundle mappings --
+# see tools/check-engine-name.js for what goes wrong when it does not.
+ENGINE_NAME=$(node tools/check-engine-name.js)   || die "engine filename mismatch — run: node tools/variant.js $VARIANT"
+echo "    engine    : $ENGINE_NAME"
+
 # --- engine -----------------------------------------------------------------
 # Built into dist/ per arch so --engine-only leaves something useful behind,
 # then copied to the root only for the arch currently being packaged.
@@ -134,7 +145,40 @@ mkdir -p dist
 # --- Windows engine ---------------------------------------------------------
 # 386, to match what the installer ships. Several sites still run 32-bit
 # Windows, and a 64-bit engine simply will not start there.
-if [ "$TARGET" = "all" ] || [ "$TARGET" = "win" ]; then
+#
+# Skipped entirely on a host that cannot package for Windows anyway, unless
+# asked for explicitly — otherwise a plain `./build.sh` on a Mac quietly
+# produces a Windows engine nobody can package, with a toolchain that may not
+# even run there.
+WANT_WIN_ENGINE=0
+if [ "$TARGET" = "win" ]; then
+  WANT_WIN_ENGINE=1
+elif [ "$TARGET" = "all" ] && [ "$CAN_WIN" = "1" ]; then
+  WANT_WIN_ENGINE=1
+fi
+
+if [ "$WANT_WIN_ENGINE" = "1" ]; then
+  # Go DROPPED WINDOWS 7 AT 1.21. A binary built with anything newer fails to
+  # start on those machines, and the error the operator sees says nothing about
+  # Go versions — it just does not run. Several sites in the field are still on
+  # Windows 7, so this is a hard stop rather than a warning.
+  case "$GO_VER" in
+    go1.20*|go1.1*) ;;
+    *)
+      warn "Windows engine needs Go 1.20.x — yours is $GO_VER."
+      warn "Go dropped Windows 7 support at 1.21, and a newer binary will not"
+      warn "start at all on the Windows 7 sites still in the field."
+      warn ""
+      warn "  go install golang.org/dl/go1.20.14@latest && go1.20.14 download"
+      warn "  GO_BIN=\$(go env GOPATH)/bin/go1.20.14 ./build.sh --target win"
+      warn ""
+      warn "To build only macOS from this machine:  ./build.sh --target mac"
+      die "refusing to build a Windows engine that Windows 7 cannot run"
+    ;;
+  esac
+fi
+
+if [ "$WANT_WIN_ENGINE" = "1" ]; then
   say "engine: windows/386"
   # Straight to the REPO ROOT, not dist/, because that is where package.json
   # looks for it:  "extraResources": [{ "from": "tarang-sender.exe", ... }]
@@ -142,7 +186,7 @@ if [ "$TARGET" = "all" ] || [ "$TARGET" = "win" ]; then
   # root still holds -- an installer whose engine predates the UI it ships
   # with, which is exactly what build.bat's header warns about.
   if ! GOOS=windows GOARCH=386 CGO_ENABLED=0 \
-      go build -ldflags "-X main.version=$APP_VER -s -w" \
+      "$GO" build -ldflags "-X main.version=$APP_VER -s -w" \
         -o "tarang-sender.exe" ./cmd/tarang-sender/ 2>"$TMPERR"; then
     cat "$TMPERR" >&2
     explain_toolchain
@@ -165,7 +209,7 @@ for arch in $ARCHES; do
 
   say "engine: darwin/$goarch"
   if ! GOOS=darwin GOARCH=$goarch CGO_ENABLED=0 \
-      go build -ldflags "-X main.version=$APP_VER -s -w" \
+      "$GO" build -ldflags "-X main.version=$APP_VER -s -w" \
         -o "dist/tarang-sender-darwin-$goarch" ./cmd/tarang-sender/ 2>"$TMPERR"; then
     cat "$TMPERR" >&2
     explain_toolchain
@@ -184,7 +228,28 @@ fi
 # --- installers -------------------------------------------------------------
 
 command -v npx >/dev/null || die "npx not found. Install Node.js."
-[ -d node_modules ] || { say "installing node dependencies"; npm install; }
+
+# A present node_modules is not necessarily a USABLE one. Copying the repo
+# between machines brings node_modules along, and that breaks two ways at once:
+# Windows has no execute bit for the .bin shims to keep, and electron-builder
+# bundles a platform-specific `app-builder` helper, so a tree carried over from
+# Windows holds the .exe version. The failure surfaces deep inside packaging as
+#   sh: node_modules/.bin/electron-builder: Permission denied
+# which reads like a permissions problem and is really a wrong-platform one --
+# chmod +x "fixes" it into a stranger failure further along.
+NEED_INSTALL=0
+if [ ! -d node_modules ]; then
+  NEED_INSTALL=1
+elif [ ! -x node_modules/.bin/electron-builder ]; then
+  warn "node_modules exists but electron-builder is not executable here."
+  warn "That usually means it was copied from another OS. Reinstalling."
+  rm -rf node_modules
+  NEED_INSTALL=1
+fi
+if [ "$NEED_INSTALL" = "1" ]; then
+  say "installing node dependencies"
+  npm install || die "npm install failed"
+fi
 
 BUILT=""
 SKIPPED=""

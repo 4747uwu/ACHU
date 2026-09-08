@@ -125,6 +125,17 @@ const LOG_DIR      = path.join(DATA_DIR, 'logs');
 // in package.json, so the two can never drift apart.
 const SENDER_EXE_NAME = 'achyu-sender';
 
+// APP_ICON is the window and tray icon, picked per platform.
+//
+// .ico is a Windows container format and macOS cannot decode it: Electron
+// throws "Failed to load image from path", the catch in createTray swallows it,
+// and the app runs with no tray at all -- on a product whose whole operating
+// model is "close to tray and leave it running". The .png ships alongside and
+// every platform reads it, so it is simply the right file everywhere but
+// Windows, where the .ico carries the multi-resolution set Explorer wants.
+const APP_ICON = path.join(__dirname, '..',
+  process.platform === 'win32' ? 'logo.ico' : 'logo.png');
+
 // Path to the engine binary.
 // Packaged build: binary is copied into the Electron resources folder.
 // Dev mode (npm start / electron .): binary lives at the project root or bin/.
@@ -213,6 +224,35 @@ function encryptionAvailable() {
   }
 }
 
+// configEncryptionAvailable is deliberately STRICTER than encryptionAvailable.
+//
+// config.json is the one file BOTH halves of the product read and write, so
+// its format is only usable if the Go engine can also decrypt it. On Windows
+// safeStorage produces a Chromium v10 blob whose key is DPAPI-wrapped, and
+// internal/oscrypt unwraps exactly that. On macOS safeStorage still works —
+// it uses the Keychain — but it wraps the key a completely different way, and
+// internal/oscrypt has no macOS path: it checks for the DPAPI prefix, fails
+// with "encrypted_key is not DPAPI-wrapped", and config.Load treats that as
+// fatal. The engine then exits before opening a log, and the UI reports
+// "Sender offline" with nothing anywhere explaining why.
+//
+// So off Windows the config is written as plaintext JSON, which the engine
+// reads natively.
+//
+// THIS STORES THE PEER PASSWORD AND API TOKEN IN CLEARTEXT ON DISK. It is a
+// deliberate, temporary trade to make macOS run at all, taken with the
+// tradeoff understood. The real fix is a macOS branch in internal/oscrypt that
+// derives Chromium's key from the Keychain (PBKDF2 over the "Safe Storage"
+// item) so both halves agree again — at which point this function should
+// simply be deleted and encryptionAvailable used everywhere.
+//
+// session.json is NOT affected: only Electron reads it, so it stays encrypted
+// by the Keychain on macOS as before.
+function configEncryptionAvailable() {
+  if (process.platform !== 'win32') return false;
+  return encryptionAvailable();
+}
+
 // readConfig returns the parsed config, or null. It tolerates a plaintext file
 // so an install that predates encryption still opens; the Go engine re-saves
 // it encrypted on its next start.
@@ -232,12 +272,15 @@ function readConfig() {
 function writeConfig(cfg) {
   const json = JSON.stringify(cfg, null, 2);
   let payload;
-  if (encryptionAvailable()) {
+  if (configEncryptionAvailable()) {
     payload = safeStorage.encryptString(json).toString('base64');
   } else {
-    // No OS keyring (a Linux dev box, typically). Persisting in cleartext is
-    // better than refusing to start, but say so.
-    console.warn('[tarang] OS encryption unavailable — config will be stored in PLAINTEXT');
+    // Either no OS keyring at all, or a platform whose keyring the Go engine
+    // cannot read — see configEncryptionAvailable. Cleartext beats refusing to
+    // start, but it must never be silent: this file holds the peer password
+    // and the API token.
+    console.warn('[tarang] config stored in PLAINTEXT — %s has no engine-readable keyring',
+      process.platform);
     payload = json;
   }
   const tmp = CONFIG_PATH + '.tmp';
@@ -982,7 +1025,7 @@ if (!gotTheLock) {
     mainWindow = new BrowserWindow({
       width: 1400, height: 900,
       title: `${PRODUCT_NAME}${INSTANCE_LABEL}`,
-      icon: path.join(__dirname, '..', 'logo.ico'),
+      icon: APP_ICON,
       autoHideMenuBar: true,
       webPreferences: {
         preload: path.join(__dirname, 'preload.js'),
@@ -1025,7 +1068,7 @@ if (!gotTheLock) {
 // tray: get the window back, and actually quit.
 function createTray() {
   try {
-    tray = new Tray(path.join(__dirname, '..', 'logo.ico'));
+    tray = new Tray(APP_ICON);
   } catch (err) {
     console.error('[tarang] tray unavailable:', err.message);
     return;

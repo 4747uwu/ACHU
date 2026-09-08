@@ -119,8 +119,17 @@ function apply(target) {
   pkg.build.nsis.shortcutName = to.productName;
   // Rename the engine as it is copied into resources. The SOURCE stays
   // whatever `go build` produced, so the Go side never has to change.
+  //
+  // BOTH platforms, and that is the point: rewriting only the Windows mapping
+  // shipped a macOS bundle whose engine was still called tarang-sender while
+  // main.js looked for achyu-sender. The app launched, found nothing to spawn,
+  // and sat there reporting "Sender offline" with no error anywhere -- the
+  // engine was right there in Resources under a name nobody asked for.
   for (const res of pkg.build.win.extraResources || []) {
     if (res.from === 'tarang-sender.exe') res.to = `${to.senderExe}.exe`;
+  }
+  for (const res of (pkg.build.mac && pkg.build.mac.extraResources) || []) {
+    if (res.from === 'tarang-sender') res.to = to.senderExe;
   }
   if (pkg.build.dmg) pkg.build.dmg.title = to.productName;
   fs.writeFileSync(PKG, JSON.stringify(pkg, null, 2) + '\n');

@@ -127,11 +127,22 @@ func run() error {
 	default:
 		logger.Info("config encrypted at rest", "format", savedFormat)
 	}
-	if savedFormat == config.FormatPlaintext && runtime.GOOS == "windows" {
-		// Both OSCrypt and DPAPI failed. The API token and the receiver
-		// password are now readable by anyone who can open the file.
-		logger.Warn("config is stored in PLAINTEXT — OS encryption is unavailable and secrets are readable on disk",
+	if savedFormat == config.FormatPlaintext {
+		// The API token and the receiver password are now readable by anyone
+		// who can open the file. On Windows that means both OSCrypt and DPAPI
+		// failed and something is wrong with the machine. Off Windows it is
+		// expected, because internal/oscrypt has no non-Windows key path yet —
+		// but expected is not the same as acceptable, and a silent warning is
+		// how a temporary trade becomes permanent. Both get logged.
+		reason := "OS encryption is unavailable on this machine"
+		if runtime.GOOS != "windows" {
+			reason = "no engine-readable keyring on " + runtime.GOOS +
+				" (internal/oscrypt is Windows-only)"
+		}
+		logger.Warn("config is stored in PLAINTEXT — secrets are readable on disk",
 			"path", *configPath,
+			"reason", reason,
+			"platform", runtime.GOOS,
 		)
 	}
 

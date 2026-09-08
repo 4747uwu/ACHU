@@ -1,6 +1,6 @@
 module github.com/bharatpacs/tarang-sender
 
-go 1.20
+go 1.21
 
 require (
 	github.com/suyashkumar/dicom v1.0.7

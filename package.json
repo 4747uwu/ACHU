@@ -154,7 +154,7 @@
       "extraResources": [
         {
           "from": "tarang-sender",
-          "to": "tarang-sender"
+          "to": "achyu-sender"
         }
       ]
     },
