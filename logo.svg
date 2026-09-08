@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0"   stop-color="#1B2250"/>
+      <stop offset="0.55" stop-color="#0D1231"/>
+      <stop offset="1"   stop-color="#070A1C"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.3" cy="0.18" r="0.75">
+      <stop offset="0" stop-color="#6558e0" stop-opacity="0.30"/>
+      <stop offset="1" stop-color="#6558e0" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect x="0" y="0" width="1024" height="1024" rx="230" fill="url(#tile)"/>
+  <rect x="0" y="0" width="1024" height="1024" rx="230" fill="url(#glow)"/>
+
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 280 782 L 512 238 L 744 782"
+          stroke="#F4F5FB" stroke-width="142"/>
+    <polygon points="441.3,580.0 582.7,580.0 618.5,664.0 405.5,664.0" fill="#f5a524" stroke="none"/>
+  </g>
+</svg>

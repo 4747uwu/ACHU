@@ -1,0 +1,94 @@
+{
+  "lab_id": "ARX1",
+  "org_id": "ARX",
+  "log_level": "info",
+
+  "dicom": {
+    "port": 8899,
+    "aet": "ACHYU",
+    "stable_age_seconds": 5,
+
+    "tls": {
+      "enabled": true,
+      "cert_file": "",
+      "key_file": "",
+      "allow_legacy_rc4": false
+    }
+  },
+
+  "http": {
+    "port": 9044,
+    "api_token": "REPLACE_WITH_RANDOM_TOKEN_AT_LOGIN"
+  },
+
+  "storage": {
+    "data_dir": "./local-data",
+    "retention_hours": 24,
+    "max_disk_gb": 50
+  },
+
+  "peer": {
+    "name": "ACHYU",
+    "url": "https://router.achyutrs.com",
+    "username": "alice",
+    "password": "alicePassword",
+    "compression": "gzip",
+    "ca_cert_path": "",
+    "protocol": "stow-rs"
+  },
+
+  "tag_injection": {
+    "enabled": true,
+    "private_creator": "ARX1",
+    "private_organisation": "ARX"
+  },
+
+  "transfer": {
+    "concurrent_workers": 6,
+    "bucket_size_mb": 0,
+    "max_http_retries": 5,
+    "http_timeout_seconds": 600
+  },
+
+  "compression": {
+    "enabled": false,
+    "skip_already_compressed": true,
+    "gdcmconv_path": "",
+    "default_rate": 0,
+    "modality_rate": { "CT": 10 },
+
+    "lossless": {
+      "//enabled": "Both transcode modes ship OFF - studies forward byte-for-byte as sent.",
+      "enabled": false,
+      "skip_already_compressed": true,
+
+      "//": "Exceptions only — an absent modality is enabled. Inert while enabled is false; it decides WHICH modalities transcode once the mode is switched on. Shipped policy: CT, MR, CR and DX all on.",
+      "modality_enabled": { "CT": true, "MR": true, "CR": true, "DX": true }
+    }
+  },
+
+  "notifier": {
+    "backend_url": "https://pacs.achyutrs.com/api/orthanc2/instance-exe-received",
+    "api_key": ""
+  },
+
+  "error_reporting": {
+    "enabled": true,
+    "backend_url": "https://pacs.achyutrs.com/api/sender/error-logs",
+    "api_key": ""
+  },
+
+  "lab_status": {
+    "enabled": true,
+    "backend_url": "https://pacs.achyutrs.com/api/sender/lab-status",
+    "api_key": "",
+    "poll_seconds": 60,
+    "fail_open": true
+  },
+
+  "resilience": {
+    "network_retry": true,
+    "instance_checkpoint": true,
+    "connectivity_watchdog": true
+  }
+}

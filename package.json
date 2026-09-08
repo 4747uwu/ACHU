@@ -1,0 +1,171 @@
+{
+  "name": "achyu-pacs",
+  "version": "0.1.1",
+  "description": "Achyu PACS — DICOM Router",
+  "author": "Achyu",
+  "main": "electron/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --inspect",
+    "logo": "electron tools/logo && npm run icons",
+    "icons": "node generate-ico.js",
+    "build": "electron-builder --win --ia32",
+    "build:mac": "bash build-mac.sh",
+    "build:go": "powershell -ExecutionPolicy Bypass -File build.ps1 -SkipElectron",
+    "build:electron": "powershell -ExecutionPolicy Bypass -File build.ps1 -SkipGo",
+    "build:all": "powershell -ExecutionPolicy Bypass -File build.ps1",
+    "build:clean": "powershell -ExecutionPolicy Bypass -File build.ps1 -Clean"
+  },
+  "build": {
+    "appId": "com.achyu.pacs",
+    "productName": "Achyu PACS",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "ia32"
+          ]
+        }
+      ],
+      "icon": "electron/logo.ico",
+      "extraResources": [
+        {
+          "from": "tarang-sender.exe",
+          "to": "achyu-sender.exe"
+        },
+        {
+          "from": "gdcmconv.exe",
+          "to": "gdcmconv.exe"
+        },
+        {
+          "from": "gdcmcharls.dll",
+          "to": "gdcmcharls.dll"
+        },
+        {
+          "from": "gdcmCommon.dll",
+          "to": "gdcmCommon.dll"
+        },
+        {
+          "from": "gdcmDICT.dll",
+          "to": "gdcmDICT.dll"
+        },
+        {
+          "from": "gdcmDSED.dll",
+          "to": "gdcmDSED.dll"
+        },
+        {
+          "from": "gdcmexpat.dll",
+          "to": "gdcmexpat.dll"
+        },
+        {
+          "from": "gdcmgetopt.dll",
+          "to": "gdcmgetopt.dll"
+        },
+        {
+          "from": "gdcmIOD.dll",
+          "to": "gdcmIOD.dll"
+        },
+        {
+          "from": "gdcmjpeg8.dll",
+          "to": "gdcmjpeg8.dll"
+        },
+        {
+          "from": "gdcmjpeg12.dll",
+          "to": "gdcmjpeg12.dll"
+        },
+        {
+          "from": "gdcmjpeg16.dll",
+          "to": "gdcmjpeg16.dll"
+        },
+        {
+          "from": "gdcmmd5.dll",
+          "to": "gdcmmd5.dll"
+        },
+        {
+          "from": "gdcmMEXD.dll",
+          "to": "gdcmMEXD.dll"
+        },
+        {
+          "from": "gdcmMSFF.dll",
+          "to": "gdcmMSFF.dll"
+        },
+        {
+          "from": "gdcmopenjp2.dll",
+          "to": "gdcmopenjp2.dll"
+        },
+        {
+          "from": "gdcmzlib.dll",
+          "to": "gdcmzlib.dll"
+        },
+        {
+          "from": "msvcp120.dll",
+          "to": "msvcp120.dll"
+        },
+        {
+          "from": "msvcr120.dll",
+          "to": "msvcr120.dll"
+        },
+        {
+          "from": "socketxx.dll",
+          "to": "socketxx.dll"
+        }
+      ]
+    },
+    "nsis": {
+      "installerIcon": "electron/logo.ico",
+      "uninstallerIcon": "electron/logo.ico",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Achyu PACS",
+      "include": "build/installer.nsh"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "category": "public.app-category.medical",
+      "identity": null,
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "extraResources": [
+        {
+          "from": "tarang-sender",
+          "to": "tarang-sender"
+        }
+      ]
+    },
+    "dmg": {
+      "title": "Achyu PACS"
+    }
+  },
+  "devDependencies": {
+    "electron": "22.3.27",
+    "electron-builder": "^24.0.0",
+    "jimp": "^1.6.1",
+    "png-to-ico": "^3.0.1"
+  }
+}

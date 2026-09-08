@@ -1,0 +1,62 @@
+{
+  "lab_id": "smoke-lab",
+  "org_id": "smoke-org",
+  "dicom": {
+    "port": 11117,
+    "aet": "SMOKE",
+    "stable_age_seconds": 5
+  },
+  "http": {
+    "port": 19144,
+    "api_token": "smoke-token"
+  },
+  "storage": {
+    "data_dir": "data",
+    "retention_hours": 24,
+    "max_disk_gb": 5
+  },
+  "peer": {
+    "name": "smoke-peer",
+    "url": "https://example.invalid/dicom-web",
+    "username": "",
+    "password": "",
+    "compression": "gzip",
+    "ca_cert_path": "",
+    "protocol": "stow-rs"
+  },
+  "tag_injection": {
+    "enabled": true,
+    "private_creator": "",
+    "private_organisation": ""
+  },
+  "transfer": {
+    "concurrent_workers": 1,
+    "bucket_size_mb": 32,
+    "max_http_retries": 1,
+    "http_timeout_seconds": 30
+  },
+  "compression": {
+    "enabled": false,
+    "skip_already_compressed": true,
+    "gdcmconv_path": "",
+    "default_rate": 0,
+    "modality_rate": {
+      "CT": 10
+    }
+  },
+  "notifier": {
+    "backend_url": "https://example.invalid/notify",
+    "api_key": ""
+  },
+  "error_reporting": {
+    "enabled": true,
+    "backend_url": "https://uevolveai.xcentic.com/api/sender/error-logs",
+    "api_key": ""
+  },
+  "resilience": {
+    "network_retry": true,
+    "instance_checkpoint": true,
+    "connectivity_watchdog": true
+  },
+  "log_level": "info"
+}

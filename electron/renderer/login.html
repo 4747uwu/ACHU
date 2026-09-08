@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Achyu PACS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700;800;900&family=Spectral:ital,wght@0,400;0,500;1,400;1,500;1,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      /* Indigo carries the panel; amber is reserved for the closing "On" of
+         the wordmark and the beam behind it, so the mark is the one thing the
+         eye lands on. Spending amber anywhere else here would undo that. */
+      --teal: #6558e0;
+      --teal-bright: #8b7dfa;
+      --brand-x: #f5a524;
+      --green: #37bf6e;
+      --blue: #1a47e0;
+      --blue-deep: #1638b8;
+      --cream: #f6f5f1;
+      --ink: #10212e;
+      --ink-soft: #475663;
+      --line: #e4e2da;
+    }
+
+    html, body {
+      height: 100vh; width: 100vw;
+      overflow: hidden;
+      font-family: 'Schibsted Grotesk', system-ui, sans-serif;
+      background: var(--cream);
+      color: var(--ink);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .stage { display: flex; height: 100vh; width: 100vw; }
+
+    /* ── LEFT BRAND PANEL ── */
+    .brand {
+      position: relative;
+      flex: 1 1 56%;
+      background: #0a0e27;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      padding: 42px 56px;
+      color: #eaf6f4;
+    }
+    .brand::before {
+      content: "";
+      position: absolute; inset: 0;
+      background-image:
+        linear-gradient(rgba(255,255,255,.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.03) 1px, transparent 1px);
+      background-size: 46px 46px;
+      pointer-events: none;
+    }
+    /* No logo row: the animated ACHYU mark IS the brand statement on this
+       screen, and .brand-center already takes the slack (flex:1), so the
+       mark stays vertically centred in the panel without it. */
+    .brand-center {
+      flex: 1;
+      display: flex; flex-direction: column; justify-content: center;
+      position: relative; z-index: 2;
+      max-width: 760px;
+    }
+
+    .eyebrow {
+      display: flex; align-items: center; gap: 14px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px; letter-spacing: .4em; text-transform: uppercase;
+      color: var(--teal-bright);
+      margin-bottom: 30px;
+    }
+    .eyebrow::before {
+      content: ""; width: 38px; height: 1px;
+      background: var(--teal-bright); opacity: .7;
+    }
+
+    /* The accented tail of any inline wordmark (footer, buttons). This page
+       carries its own stylesheet and does not load app.css, so the class is
+       defined here as well — same amber, same reasoning. */
+    .brand-x { color: var(--brand-x); font-weight: 700; }
+
+    /* wordmark */
+    .mark {
+      position: relative;
+      display: flex; justify-content: center;
+      width: max-content; max-width: 100%;
+      font-weight: 900;
+      font-size: clamp(54px, 8.2vw, 116px);
+      letter-spacing: -.02em; line-height: .92;
+      margin-bottom: 6px;
+      opacity: 0; transition: opacity .45s ease;
+    }
+    .mark.ready { opacity: 1; }
+    .word {
+      display: inline-flex;
+      transform: translateX(var(--tx, 0));
+      transition: transform .95s cubic-bezier(.62,.02,.16,1) .9s;
+    }
+    .word.w1 { color: #f2f3fb; }
+    .word.w2 { color: var(--brand-x); }
+    .ltr { display: inline-block; position: relative; }
+    .anchor .g, .anchor .f { display: block; }
+    .anchor .g {
+      color: transparent;
+      -webkit-text-stroke: 2px rgba(155,145,250,.6);
+      -webkit-clip-path: inset(0 0 100% 0);
+      clip-path: inset(0 0 100% 0);
+      transition: clip-path .72s cubic-bezier(.5,.05,.3,1);
+    }
+    .anchor .f {
+      position: absolute; inset: 0; color: inherit;
+      opacity: 0; transition: opacity .4s ease .66s;
+    }
+    .word.w1 .anchor .f { color: #f2f3fb; }
+    .word.w2 .anchor .f { color: var(--brand-x); }
+    /* The YU half draws itself in amber too, so the colour arrives with the
+       letters rather than snapping in at the end of the animation. */
+    .word.w2 .anchor .g { -webkit-text-stroke-color: rgba(245,165,36,.65); }
+    .rest {
+      opacity: 0;
+      transform: translateX(-.34em) scaleX(.4);
+      transform-origin: left center;
+      transition: opacity .5s ease, transform .6s cubic-bezier(.4,.7,.2,1);
+    }
+    .mark.play .word { transform: translateX(0); }
+    .mark.play .anchor .g { -webkit-clip-path: inset(0 0 0 0); clip-path: inset(0 0 0 0); }
+    .mark.play .anchor .f { opacity: 1; }
+    .mark.play .rest { opacity: 1; transform: none; }
+    .mark.reset .word,
+    .mark.reset .anchor .g,
+    .mark.reset .anchor .f,
+    .mark.reset .rest { transition: none !important; }
+    .beam {
+      position: absolute; top: 50%; left: 50%;
+      height: 122%; width: 3px;
+      transform: translate(-50%, -50%);
+      background: linear-gradient(180deg, transparent, var(--brand-x), transparent);
+      box-shadow: 0 0 18px 4px rgba(245,165,36,.55);
+      opacity: 0; border-radius: 2px; pointer-events: none;
+    }
+    .mark.beaming .beam { opacity: 1; animation: beamfade 1.4s ease forwards; }
+    @keyframes beamfade { 0%{opacity:0} 25%{opacity:1} 100%{opacity:0} }
+
+    /* tagline */
+    .tagwrap { margin-top: 38px; min-height: 120px; position: relative; }
+    .tagline {
+      position: absolute; left: 0; top: 0; right: 0;
+      font-size: clamp(24px, 2.7vw, 36px);
+      line-height: 1.22; font-weight: 500;
+      color: #cfe7e4; letter-spacing: -.005em;
+    }
+    .tagline .serif {
+      font-family: 'Spectral', serif;
+      font-style: italic; font-weight: 500; color: #fff;
+    }
+    .tword {
+      display: inline-block; overflow: hidden;
+      vertical-align: top; padding: .14em 0;
+      margin: -.14em .26em -.14em 0;
+    }
+    .char {
+      display: inline-block;
+      transform: translateY(115%); opacity: 0;
+      will-change: transform, opacity;
+    }
+    .char.in {
+      transform: translateY(0); opacity: 1;
+      transition: transform .7s cubic-bezier(.19,.8,.16,1), opacity .5s ease;
+    }
+    .char.out {
+      transform: translateY(-115%); opacity: 0;
+      transition: transform .46s cubic-bezier(.5,0,.7,.2), opacity .36s ease;
+    }
+
+    /* brand footer */
+    .brand-foot {
+      position: relative; z-index: 2;
+      display: flex; align-items: center; gap: 26px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10.5px; letter-spacing: .16em;
+      color: rgba(234,246,244,.42); text-transform: uppercase;
+    }
+    .dotled { display: flex; align-items: center; gap: 8px; }
+    .pulse {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 0 0 rgba(55,191,110,.6);
+      animation: beat 2.2s ease-out infinite;
+    }
+    @keyframes beat {
+      0%   { box-shadow: 0 0 0 0 rgba(55,191,110,.55); }
+      70%  { box-shadow: 0 0 0 7px transparent; }
+      100% { box-shadow: 0 0 0 0 transparent; }
+    }
+
+    /* ── RIGHT AUTH PANEL ── */
+    .auth {
+      flex: 0 0 488px;
+      position: relative; background: var(--cream);
+      display: flex; flex-direction: column;
+      padding: 30px 56px;
+    }
+    .auth-top { display: flex; justify-content: flex-end; position: relative; z-index: 2; }
+
+    .status-badge {
+      display: inline-flex; align-items: center; gap: 9px;
+      padding: 7px 13px;
+      border: 1px solid var(--line); border-radius: 999px;
+      background: #fff; font-size: 11.5px; color: var(--ink-soft);
+      box-shadow: 0 1px 2px rgba(16,33,46,.04);
+    }
+    .status-badge .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+    .status-badge .ver {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10.5px; color: #97a1a9;
+      padding-left: 9px; margin-left: 5px;
+      border-left: 1px solid var(--line);
+    }
+
+    .auth-mid {
+      flex: 1; display: flex; flex-direction: column; justify-content: center;
+      position: relative; z-index: 2;
+    }
+
+    .welcome {
+      display: flex; align-items: center; gap: 12px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px; letter-spacing: .34em; text-transform: uppercase;
+      color: #9aa3ab; margin-bottom: 20px; justify-content: center;
+    }
+    .welcome::before, .welcome::after {
+      content: ""; height: 1px; width: 26px; background: var(--line);
+    }
+
+    h1.head {
+      margin: 0; text-align: center;
+      font-weight: 700; font-size: 34px;
+      line-height: 1.08; letter-spacing: -.02em;
+    }
+    h1.head .it {
+      font-family: 'Spectral', serif;
+      font-style: italic; font-weight: 500;
+      display: block; font-size: 40px;
+    }
+    .sub {
+      text-align: center; color: var(--ink-soft);
+      font-size: 13.5px; line-height: 1.6;
+      margin: 18px auto 28px; max-width: 300px;
+    }
+
+    /* form fields */
+    .field { position: relative; margin-bottom: 14px; }
+    .field > svg {
+      position: absolute; left: 16px; top: 50%;
+      transform: translateY(-50%); color: #aab2b9; pointer-events: none;
+    }
+    .field input {
+      width: 100%; height: 54px;
+      padding: 0 16px 0 44px;
+      border: 1px solid var(--line); border-radius: 12px;
+      background: #fff; font-size: 14px; font-family: inherit;
+      color: var(--ink); outline: none;
+      transition: border-color .15s, box-shadow .15s;
+    }
+    .field input.has-pw { padding-right: 50px; }
+    .field input::placeholder { color: #9aa3ab; }
+    .field input:focus {
+      border-color: var(--teal);
+      box-shadow: 0 0 0 3px rgba(19,163,156,.13);
+    }
+    .toggle-pw {
+      position: absolute; right: 14px; top: 50%;
+      transform: translateY(-50%);
+      width: 28px; height: 28px;
+      display: grid; place-items: center;
+      border-radius: 6px; color: #9aa3ab;
+      cursor: pointer; background: transparent; border: 0;
+      transition: color .12s, background .12s;
+    }
+    .toggle-pw:hover { color: var(--teal); background: rgba(19,163,156,.06); }
+
+    /* status / spinner / error */
+    #statusMsg {
+      text-align: center; font-size: 12px;
+      color: var(--ink-soft); min-height: 16px; margin-bottom: 4px;
+    }
+    #spinner { display: none; }
+    #spinner.show { display: block; }
+
+    #errBox {
+      display: none; align-items: center; gap: 8px;
+      padding: 10px 13px; margin-bottom: 12px;
+      background: #fff4f4; border: 1px solid #f5c2c2;
+      border-radius: 10px; color: #a83232; font-size: 12.5px;
+    }
+    #errBox.show { display: flex; }
+
+    /* sign-in button */
+    #loginBtn {
+      width: 100%; height: 56px; margin-top: 8px;
+      border: none; border-radius: 12px; cursor: pointer;
+      background: linear-gradient(180deg, var(--blue) 0%, var(--blue-deep) 100%);
+      color: #fff; font-family: inherit; font-size: 15px;
+      font-weight: 600; letter-spacing: .01em;
+      display: flex; align-items: center; justify-content: center; gap: 9px;
+      box-shadow: 0 8px 22px -8px rgba(26,71,224,.6);
+      transition: transform .12s, box-shadow .15s, filter .15s;
+    }
+    #loginBtn:hover:not(:disabled) {
+      filter: brightness(1.06);
+      box-shadow: 0 12px 28px -8px rgba(26,71,224,.7);
+    }
+    #loginBtn:active:not(:disabled) { transform: translateY(1px); }
+    #loginBtn:disabled {
+      background: #cdd2d8; color: #7c8590;
+      cursor: not-allowed; box-shadow: none;
+    }
+    .btn-arrow { transition: transform .2s; }
+    #loginBtn:hover:not(:disabled) .btn-arrow { transform: translateX(4px); }
+
+    .spin-sm { animation: ss-spin .8s linear infinite; }
+    @keyframes ss-spin { to { transform: rotate(360deg); } }
+
+    /* badges */
+    .badges {
+      display: flex; align-items: center; justify-content: center;
+      gap: 18px; margin-top: 28px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10.5px; letter-spacing: .14em;
+      color: #a6aeb5; text-transform: uppercase;
+    }
+    .badges span { display: flex; align-items: center; gap: 7px; }
+    .badges .sep { width: 3px; height: 3px; border-radius: 50%; background: #c8cdd1; }
+
+    /* auth footer */
+    .auth-foot {
+      display: flex; justify-content: space-between;
+      position: relative; z-index: 2;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px; letter-spacing: .08em; color: #b3bac0;
+    }
+    .auth-foot button {
+      background: transparent; border: 0;
+      color: inherit; font: inherit; letter-spacing: inherit;
+      cursor: pointer; padding: 0;
+    }
+    .auth-foot button:hover { color: var(--ink-soft); }
+
+    /* ── SETTINGS OVERLAY (light theme) ── */
+    .overlay {
+      display: none;
+      position: fixed; inset: 0;
+      background: rgba(16,33,46,.5);
+      z-index: 200;
+      align-items: center; justify-content: center;
+    }
+    .overlay.show { display: flex; }
+
+    .settings-panel {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      box-shadow: 0 24px 64px rgba(16,33,46,.18);
+      width: 380px; padding: 28px 28px 22px;
+    }
+    .settings-panel h2 {
+      font-size: 15px; font-weight: 700; color: var(--ink);
+      margin-bottom: 18px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .close-btn {
+      background: none; border: none; cursor: pointer;
+      color: #9aa3ab; font-size: 18px; line-height: 1; padding: 0 2px;
+    }
+    .close-btn:hover { color: var(--ink); }
+
+    .gate-hint { font-size: 12.5px; color: var(--ink-soft); margin-bottom: 14px; }
+    .gate-err { font-size: 12px; color: #a83232; margin-top: 6px; min-height: 16px; }
+
+    .settings-form { display: none; }
+    .settings-form.show { display: block; }
+
+    .sep-label {
+      font-size: 10px; font-weight: 600; letter-spacing: .1em;
+      text-transform: uppercase; color: #9aa3ab;
+      font-family: 'JetBrains Mono', monospace;
+      margin: 16px 0 10px;
+    }
+    .cfg-field { margin-bottom: 12px; }
+    .cfg-field label {
+      display: block; font-size: 12px; font-weight: 500;
+      color: var(--ink-soft); margin-bottom: 5px;
+    }
+    .cfg-field input {
+      width: 100%; padding: 10px 12px;
+      background: var(--cream); border: 1px solid var(--line);
+      border-radius: 8px; font-size: 13px; color: var(--ink);
+      font-family: inherit; outline: none;
+      transition: border-color .15s, box-shadow .15s;
+    }
+    .cfg-field input:focus {
+      border-color: var(--teal);
+      box-shadow: 0 0 0 3px rgba(19,163,156,.1);
+    }
+    .save-row { margin-top: 16px; display: flex; gap: 8px; }
+    .btn-save {
+      flex: 1; height: 44px;
+      background: linear-gradient(180deg, var(--blue), var(--blue-deep));
+      color: #fff; border: none; border-radius: 8px;
+      font-size: 14px; font-weight: 600; font-family: inherit; cursor: pointer;
+    }
+    .btn-save:hover { filter: brightness(1.06); }
+    .btn-cancel {
+      flex: 1; height: 44px;
+      background: var(--cream); border: 1px solid var(--line);
+      color: var(--ink-soft); border-radius: 8px;
+      font-size: 14px; font-weight: 500; font-family: inherit; cursor: pointer;
+    }
+    .btn-cancel:hover { background: #eeedea; }
+
+    /* responsive */
+    @media (max-width: 1040px) {
+      .stage { flex-direction: column; overflow: auto; }
+      html, body { overflow: auto; }
+      .brand { flex: none; min-height: 46vh; padding: 30px 34px; }
+      .auth { flex: none; width: 100%; padding: 34px; }
+      .mark { font-size: clamp(46px, 12vw, 88px); }
+      .tagwrap { min-height: 104px; }
+    }
+    @media (max-width: 560px) {
+      .brand { padding: 24px; min-height: auto; }
+      .eyebrow { margin-bottom: 18px; }
+      .tagwrap { min-height: 130px; }
+      .brand-foot { flex-wrap: wrap; gap: 14px; }
+      .auth { padding: 26px 22px; }
+    }
+  </style>
+</head>
+<body>
+<div class="stage">
+
+  <!-- ─── LEFT: brand ─── -->
+  <section class="brand">
+    <div class="brand-center">
+      <div class="eyebrow">Welcome back</div>
+
+      <!--
+        The animation pulls the two "anchor" letters together at the centre,
+        then fans each word's .rest letters out from its own anchor. The
+        anchors are A and Y — the first letter of each half of the wordmark,
+        ACH + YU — so what meets at the centre is "AY", with CH unfolding
+        behind the A and U behind the Y. The letter count is not fixed
+        anywhere: the script measures the anchors at runtime and staggers
+        .rest by index. The w2 half carries the amber, matching the
+        Ach/yu split used in the footer and in the app's header.
+      -->
+      <div class="mark" id="mark" aria-label="ACHYU">
+        <span class="word w1">
+          <span class="ltr anchor"><span class="g">A</span><span class="f">A</span></span>
+          <span class="ltr rest">C</span><span class="ltr rest">H</span>
+        </span>
+        <span class="word w2">
+          <span class="ltr anchor"><span class="g">Y</span><span class="f">Y</span></span>
+          <span class="ltr rest">U</span>
+        </span>
+        <span class="beam"></span>
+      </div>
+
+      <div class="tagwrap"><div class="tagline" id="tagline"></div></div>
+    </div>
+
+    <div class="brand-foot">
+      <div class="dotled"><span class="pulse"></span>System Online</div>
+      <span>Ach<span class="brand-x">yu</span></span>
+      <span>v3.2.1</span>
+    </div>
+  </section>
+
+  <!-- ─── RIGHT: auth ─── -->
+  <section class="auth">
+    
+
+    <div class="auth-mid">
+      <div class="welcome">Secure sign in</div>
+      
+      <p class="sub">Sign in to access your Achyu workspace — worklists, reports, and DICOM studies, all in one place.</p>
+
+      <div id="statusMsg"></div>
+
+      <form id="loginForm" onsubmit="handleLogin(event)">
+        <!-- error box -->
+        <div id="errBox">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="12" y1="8" x2="12" y2="12"/>
+            <line x1="12" y1="16" x2="12.01" y2="16"/>
+          </svg>
+          <span id="errTxt"></span>
+        </div>
+
+        <!-- username -->
+        <div class="field">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="8" r="4"/>
+            <path d="M4 21c0-4 4-6 8-6s8 2 8 6"/>
+          </svg>
+          <input type="text" id="username" placeholder="Username / Email"
+                 autocomplete="username" required autofocus>
+        </div>
+
+        <!-- password -->
+        <div class="field">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="4" y="11" width="16" height="10" rx="2"/>
+            <path d="M8 11V7a4 4 0 0 1 8 0v4"/>
+          </svg>
+          <input type="password" id="password" placeholder="Password"
+                 autocomplete="current-password" required class="has-pw">
+          <button type="button" class="toggle-pw" id="togglePwBtn" aria-label="Show password">
+            <svg id="eyeIcon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+          </button>
+        </div>
+
+        <!-- hidden spinner div — login.js toggles .show; button loading state handled below -->
+        <div id="spinner"></div>
+
+        <button type="submit" id="loginBtn">
+          <span id="btnContent" style="display:flex;align-items:center;gap:9px;">
+            Sign in to Achyu
+            <svg class="btn-arrow" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M5 12h14M13 6l6 6-6 6"/>
+            </svg>
+          </span>
+        </button>
+      </form>
+
+      
+    </div>
+
+    <div class="auth-foot">
+      <span>&copy; 2026 Achyu</span>
+      <button type="button" onclick="openGate()">&#9881;</button>
+    </div>
+  </section>
+</div>
+
+<!-- ─── Settings overlay ─── -->
+<div class="overlay" id="overlay">
+  <div class="settings-panel">
+    <h2>
+      Configuration
+      <button class="close-btn" onclick="closeOverlay()">&#10005;</button>
+    </h2>
+
+    <div class="gate" id="gate">
+      <div class="gate-hint">Enter the settings password to continue.</div>
+      <div class="cfg-field">
+        <label for="gatePass">Settings password</label>
+        <input type="password" id="gatePass" placeholder="&#8226;&#8226;&#8226;&#8226;"
+               autocomplete="off" onkeydown="gateKeydown(event)">
+      </div>
+      <button class="btn-save" style="width:100%;margin-top:8px" onclick="unlockSettings()">Unlock</button>
+      <div class="gate-err" id="gateErr"></div>
+    </div>
+
+    <div class="settings-form" id="settingsForm">
+      <div class="sep-label">Auth API</div>
+      <div class="cfg-field">
+        <label for="cfgApiUrl">Login endpoint URL</label>
+        <input type="url" id="cfgApiUrl"
+               placeholder="https://pacs.achyutrs.com/api/auth/lab-login">
+      </div>
+
+      <div class="sep-label">PACS Receiver</div>
+      <div class="cfg-field">
+        <label for="cfgPeerUrl">Receiver URL</label>
+        <input type="url" id="cfgPeerUrl" placeholder="https://router.achyutrs.com">
+      </div>
+      <div class="cfg-field">
+        <label for="cfgPeerUser">Username</label>
+        <input type="text" id="cfgPeerUser" placeholder="alice" autocomplete="off">
+      </div>
+      <div class="cfg-field">
+        <label for="cfgPeerPass">Password</label>
+        <input type="password" id="cfgPeerPass" placeholder="leave blank to keep current" autocomplete="off">
+      </div>
+
+      <div class="save-row">
+        <button class="btn-cancel" onclick="closeOverlay()">Cancel</button>
+        <button class="btn-save" onclick="saveSettings()">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Animations ─── -->
+<script>
+  // password toggle
+  (function () {
+    var pwInput = document.getElementById('password');
+    var btn = document.getElementById('togglePwBtn');
+    var icon = document.getElementById('eyeIcon');
+    var EYE_OPEN = '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';
+    var EYE_SHUT = '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>';
+    var showing = false;
+    btn.addEventListener('click', function () {
+      showing = !showing;
+      pwInput.type = showing ? 'text' : 'password';
+      icon.innerHTML = showing ? EYE_SHUT : EYE_OPEN;
+      btn.setAttribute('aria-label', showing ? 'Hide password' : 'Show password');
+    });
+  })();
+
+  // wordmark animation
+  (function () {
+    var mark = document.getElementById('mark');
+    if (!mark) return;
+    var w1 = mark.querySelector('.w1');
+    var w2 = mark.querySelector('.w2');
+    var s1 = w1 && w1.querySelector('.anchor');
+    var s2 = w2 && w2.querySelector('.anchor');
+    var rests = Array.from(mark.querySelectorAll('.rest'));
+    if (!w1 || !w2 || !s1 || !s2) return;
+    rests.forEach(function (r, i) { r.style.transitionDelay = (1.15 + i * 0.06) + 's'; });
+    function measure() {
+      mark.classList.add('reset');
+      w1.style.removeProperty('--tx'); w2.style.removeProperty('--tx');
+      void mark.offsetWidth;
+      var m = mark.getBoundingClientRect();
+      var center = m.left + m.width / 2;
+      var r1 = s1.getBoundingClientRect();
+      var r2 = s2.getBoundingClientRect();
+      var total = r1.width + r2.width;
+      w1.style.setProperty('--tx', (center - total / 2 - r1.left).toFixed(1) + 'px');
+      w2.style.setProperty('--tx', (center - total / 2 + r1.width - r2.left).toFixed(1) + 'px');
+      void mark.offsetWidth;
+      mark.classList.remove('reset');
+    }
+    function play() {
+      mark.classList.remove('play');
+      measure();
+      mark.classList.add('ready');
+      void mark.offsetWidth;
+      mark.classList.add('beaming');
+      requestAnimationFrame(function () { mark.classList.add('play'); });
+      setTimeout(function () { mark.classList.remove('beaming'); }, 1500);
+    }
+    window.addEventListener('resize', function () { if (mark.classList.contains('play')) measure(); });
+    setTimeout(play, 300);
+    setInterval(play, 9000);
+  })();
+
+  // cycling tagline
+  (function () {
+    var tagEl = document.getElementById('tagline');
+    if (!tagEl) return;
+    // These describe what the router actually does, which is what an
+    // operator staring at a login screen wants reassurance about: studies
+    // leave the building, secure or plain, from any modality.
+    var PHRASES = [
+      [['Every study reaches the ', false], ['central PACS.', true]],
+      [['Encrypted or plain, ', false], ['one port.', true]],
+      [['Your modalities, ', false], ['bridged.', true]],
+    ];
+    var idx = 0, current = [];
+    function schedule(fn, ms) { return setTimeout(fn, ms); }
+    function buildPhrase(parts) {
+      tagEl.innerHTML = '';
+      var chars = [];
+      parts.forEach(function (part) {
+        var txt = part[0], serif = part[1];
+        txt.split(' ').forEach(function (w) {
+          if (!w) return;
+          var word = document.createElement('span');
+          word.className = 'tword' + (serif ? ' serif' : '');
+          w.split('').forEach(function (ch) {
+            var s = document.createElement('span');
+            s.className = 'char'; s.textContent = ch;
+            word.appendChild(s); chars.push(s);
+          });
+          tagEl.appendChild(word);
+        });
+      });
+      return chars;
+    }
+    function hidePhrase() {
+      current.forEach(function (c, i) { schedule(function () { c.classList.remove('in'); c.classList.add('out'); }, i * 15); });
+      schedule(function () { idx = (idx + 1) % PHRASES.length; showPhrase(); }, current.length * 15 + 600);
+    }
+    function showPhrase() {
+      current = buildPhrase(PHRASES[idx]);
+      current.forEach(function (c, i) { schedule(function () { c.classList.add('in'); }, 60 + i * 28); });
+      schedule(hidePhrase, 60 + current.length * 28 + 2700);
+    }
+    schedule(showPhrase, 700);
+  })();
+</script>
+
+<!-- login.js: handleLogin, openGate, closeOverlay, gateKeydown, unlockSettings, saveSettings -->
+<script src="login.js"></script>
+
+<!-- override login.js UI helpers to match new design -->
+<script>
+  function setLoading(on) {
+    document.getElementById('loginBtn').disabled = on;
+    var content = document.getElementById('btnContent');
+    if (!content) return;
+    if (on) {
+      content.innerHTML =
+        '<svg class="spin-sm" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>' +
+        'Signing in…';
+    } else {
+      content.innerHTML =
+        'Sign in to Achyu' +
+        '<svg class="btn-arrow" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>';
+    }
+  }
+  function showErr(msg) {
+    var box = document.getElementById('errBox');
+    document.getElementById('errTxt').textContent = msg;
+    box.classList.add('show');
+  }
+  function clearErr() {
+    document.getElementById('errBox').classList.remove('show');
+  }
+  function setStatus(msg) {
+    document.getElementById('statusMsg').textContent = msg;
+  }
+</script>
+</body>
+</html>
