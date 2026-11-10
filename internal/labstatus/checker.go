@@ -32,7 +32,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -82,7 +81,7 @@ const (
 	// overnight must not generate a warning per queued series.
 	blockedWarnInterval = time.Minute
 
-	requestTimeout = 15 * time.Second
+	requestTimeout = 90 * time.Second
 )
 
 // Verdict is a point-in-time answer about whether the lab may transmit.
@@ -113,6 +112,10 @@ type Verdict struct {
 type Checker struct {
 	BackendURL   string
 	APIKey       string
+
+	// Failover sends the check to a second backend host when the first does
+	// not answer. Nil is fine — it then behaves exactly as before.
+	Failover *httpx.Failover
 	LabID        string
 	OrgID        string
 	Hostname     string
@@ -421,24 +424,20 @@ func (c *Checker) check(ctx context.Context, reason string) Verdict {
 		return interpretResponse(0, nil, err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BackendURL, bytes.NewReader(body))
-	if err != nil {
+	res, err := c.Failover.PostJSON(ctx, c.client, c.BackendURL, body,
+		func(req *http.Request) {
+			req.Header.Set("Accept", "application/json")
+			if c.APIKey != "" {
+				req.Header.Set("Authorization", "Bearer "+c.APIKey)
+			}
+		})
+	// Status 0 means NO host answered at all. Any real status — including the
+	// 404 this endpoint currently returns — is an answer and must go through
+	// interpretResponse unchanged, exactly as the single-host version did.
+	if res.Status == 0 {
 		return interpretResponse(0, nil, err)
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	if c.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+c.APIKey)
-	}
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return interpretResponse(0, nil, err)
-	}
-	defer resp.Body.Close()
-
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
-	return interpretResponse(resp.StatusCode, raw, nil)
+	return interpretResponse(res.Status, res.Body, nil)
 }
 
 // ---------------------------------------------------------------------------

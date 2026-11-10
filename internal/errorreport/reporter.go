@@ -17,7 +17,6 @@
 package errorreport
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -71,6 +70,10 @@ type Report struct {
 type Reporter struct {
 	backendURL string
 	apiKey     string
+
+	// failover sends the report to a second backend host when the first does
+	// not answer. Unexported with a setter, matching this struct's style.
+	failover *httpx.Failover
 	appVersion string
 	device     DeviceInfo
 	lab        LabInfo
@@ -97,7 +100,7 @@ func New(backendURL, apiKey, appVersion, dataDir string, device DeviceInfo, lab 
 		device:     device,
 		lab:        lab,
 		spoolDir:   filepath.Join(dataDir, "error-reports"),
-		client:     httpx.NewClient(15 * time.Second),
+		client:     httpx.NewClient(90 * time.Second),
 		signal:     make(chan struct{}, 1),
 		lastSent:   make(map[string]time.Time),
 		cooldown:   30 * time.Second,
@@ -217,24 +220,17 @@ func (r *Reporter) flush(ctx context.Context) {
 }
 
 // send POSTs one report body. Returns nil only on a 2xx response.
+// SetFailover gives the reporter a second backend host to try. Optional.
+func (r *Reporter) SetFailover(f *httpx.Failover) { r.failover = f }
+
 func (r *Reporter) send(ctx context.Context, body []byte) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.backendURL, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if r.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+r.apiKey)
-	}
-	resp, err := r.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("backend returned HTTP %d", resp.StatusCode)
-	}
-	return nil
+	_, err := r.failover.PostJSON(ctx, r.client, r.backendURL, body,
+		func(req *http.Request) {
+			if r.apiKey != "" {
+				req.Header.Set("Authorization", "Bearer "+r.apiKey)
+			}
+		})
+	return err
 }
 
 // spool writes one report to disk as <id>.json (atomic rename).

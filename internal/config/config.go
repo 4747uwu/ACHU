@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/bharatpacs/tarang-sender/internal/dpapi"
 )
@@ -86,6 +87,7 @@ type Config struct {
 	Notifier      NotifierConfig      `json:"notifier"`
 	ErrorReport   ErrorReportConfig   `json:"error_reporting"`
 	LabStatus     LabStatusConfig     `json:"lab_status"`
+	API           APIConfig           `json:"api"`
 	Resilience    ResilienceConfig    `json:"resilience"`
 	LogLevel      string              `json:"log_level"`
 
@@ -135,6 +137,20 @@ type StorageConfig struct {
 	MaxDiskGB       int    `json:"max_disk_gb"`
 }
 
+// APIConfig is the backend API this sender talks to.
+//
+// One block covers every backend caller — the study notifier, the delivered
+// notification, error-log upload and the activation gate — because all of
+// their backend_url values sit under this base. That is why failover here
+// rewrites a URL prefix rather than keeping a fallback list per service:
+// four lists would be four things to keep in sync.
+//
+// The per-service backend_url fields stay absolute and are unchanged.
+type APIConfig struct {
+	BaseURL          string   `json:"base_url"`
+	FallbackBaseURLs []string `json:"fallback_base_urls,omitempty"`
+}
+
 // PeerConfig describes the receiver-side Orthanc with the Transfers plugin.
 type PeerConfig struct {
 	Name        string `json:"name"`
@@ -143,6 +159,14 @@ type PeerConfig struct {
 	Password    string `json:"password"`
 	Compression string `json:"compression"`
 	CACertPath  string `json:"ca_cert_path"`
+
+	// FallbackURLs are additional receivers, in preference order after URL.
+	// Consulted only in automatic selection; see peers.go.
+	FallbackURLs []string `json:"fallback_urls,omitempty"`
+
+	// Selection is "auto" (default when empty) or "manual". Manual means an
+	// operator pinned URL and no failure may move off it.
+	Selection string `json:"selection,omitempty"`
 
 	// Protocol selects the push transport. Valid values: "stow-rs" (default,
 	// requires the dicom-web plugin on the receiver) or "instances" (uses
@@ -305,6 +329,10 @@ func Default() Config {
 			BackendURL:  "https://pacs.achyutrs.com/api/sender/lab-status",
 			PollSeconds: 60,
 			FailOpen:    true,
+		},
+		API: APIConfig{
+			BaseURL:          "https://pacs.achyutrs.com/api",
+			FallbackBaseURLs: []string{"https://achyu.xcentic.com/api"},
 		},
 		Resilience: ResilienceConfig{
 			NetworkRetry:         true,
@@ -489,6 +517,15 @@ func (c Config) Validate() error {
 	if c.Peer.Name == "" {
 		return errors.New("peer.name is required")
 	}
+	// Anything other than the two known modes is a typo, and guessing would
+	// silently give a site behaviour its operator did not choose.
+	switch strings.ToLower(strings.TrimSpace(c.Peer.Selection)) {
+	case "", PeerSelectionAuto, PeerSelectionManual:
+	default:
+		return fmt.Errorf("peer.selection must be %q or %q, got %q",
+			PeerSelectionAuto, PeerSelectionManual, c.Peer.Selection)
+	}
+
 	switch c.Peer.Protocol {
 	case "", "stow-rs", "instances":
 		// valid

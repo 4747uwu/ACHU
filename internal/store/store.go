@@ -365,6 +365,50 @@ func (s *Store) ListStudies(status string, limit int) ([]StudyRecord, error) {
 }
 
 // SetStudyStatus updates the study's status and maintains the status index.
+// ClaimStudyPeer sets a study's receiver to want, but only if it is currently
+// expect. It returns the value stored afterwards and whether THIS call wrote it.
+//
+// Compare-and-swap, not a plain setter, because two upload workers can start
+// two series of the same unassigned study at once. Both would see "unassigned",
+// run independent reachability checks, and on a flaky network those checks can
+// disagree — leaving the two series on different receivers. The study is then
+// incomplete on both, neither worker sees a "move", nothing is re-sent, and it
+// is eventually marked delivered. One transaction makes the loser observe the
+// winner's choice and follow it.
+//
+// swapped is the signal that matters, not stored == want: two callers that
+// both picked the same new receiver both see stored == want, but only one of
+// them actually moved the study and may re-queue its siblings.
+//
+// Read-modify-write inside the transaction for the same reason PutInstance
+// does: GetStudy + UpdateStudy from outside would clobber instance counts
+// written concurrently by ingestion.
+func (s *Store) ClaimStudyPeer(uid, expect, want string) (stored string, swapped bool, err error) {
+	if uid == "" {
+		return "", false, errors.New("claim study peer: empty UID")
+	}
+	err = s.db.Update(func(tx *bbolt.Tx) error {
+		studies := tx.Bucket(bucketStudies)
+		rec, ok := getJSON[StudyRecord](studies, []byte(uid))
+		if !ok {
+			return ErrNotFound
+		}
+		if rec.AssignedPeerURL == expect {
+			rec.AssignedPeerURL = want
+			if err := putJSON(studies, []byte(uid), rec); err != nil {
+				return err
+			}
+			swapped = true
+		}
+		stored = rec.AssignedPeerURL
+		return nil
+	})
+	if err != nil {
+		return "", false, err
+	}
+	return stored, swapped, nil
+}
+
 func (s *Store) SetStudyStatus(uid, status string) error {
 	return s.db.Update(func(tx *bbolt.Tx) error {
 		studies := tx.Bucket(bucketStudies)

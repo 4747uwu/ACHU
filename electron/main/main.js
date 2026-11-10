@@ -309,10 +309,66 @@ function writeSession(session) {
   fs.renameSync(tmp, SESSION_PATH);
 }
 
+// Receivers, in automatic-mode preference order.
+//
+// Each is written with the ONE scheme that actually works. Getting this wrong
+// is not cosmetic: a receiver that answers a GET on http but 301s to https
+// looks perfectly healthy to the reachability probe, while an upload — a
+// streamed POST with no replayable body — cannot follow the redirect and hangs
+// until the client timeout. ROUTER1 was verified as https (http 301s to it).
+const ROUTER1 = 'https://router.achyutrs.com';
+const ROUTER2 = 'https://achyurouter.xcentic.com';
+const KNOWN_RECEIVERS = [ROUTER1, ROUTER2];
+
+// Backend API hosts, in preference order. Same deployment behind two names;
+// either one can serve the whole API.
+const API_HOSTS = ['pacs.achyutrs.com', 'achyu.xcentic.com'];
+
+// Same API base on the other known hosts. [] when the base is not one of
+// ours — an operator's own server must not be redirected to us.
+function apiFallbackBases(base) {
+  let u; try { u = new URL(base); } catch (_) { return []; }
+  const here = u.hostname.toLowerCase();
+  if (!API_HOSTS.some((h) => h === here)) return [];
+  const out = [];
+  for (const h of API_HOSTS) {
+    if (h === here) continue;
+    const alt = new URL(base);
+    alt.hostname = h;
+    alt.protocol = 'https:';
+    out.push(alt.toString().replace(/\/$/, ''));
+  }
+  return out;
+}
+
+function peerHost(url) {
+  try { return new URL(String(url)).hostname.toLowerCase(); } catch (_) { return ''; }
+}
+
+// canonicalPeerUrl maps any spelling of a known receiver — wrong scheme, extra
+// slash, different case — onto its one working URL. Old installs that stored a
+// receiver with the wrong scheme are migrated by this on their next start.
+function canonicalPeerUrl(url) {
+  const trimmed = String(url || '').trim();
+  const host = peerHost(trimmed);
+  if (!host) return trimmed;
+  for (const known of KNOWN_RECEIVERS) {
+    if (host === peerHost(known)) return known;
+  }
+  return trimmed;
+}
+
+function isKnownReceiver(url) {
+  const host = peerHost(url);
+  return !!host && KNOWN_RECEIVERS.some((k) => peerHost(k) === host);
+}
+
 function getDefaultPeer() {
   return {
     name: 'ACHYU',
-    url: 'https://router.achyutrs.com',
+    url: ROUTER1,
+    fallbackUrls: [ROUTER2],
+    selection: 'auto',
     username: 'Xcentic',
     password: 'XcenticIngestion123',
     compression: 'gzip',
@@ -333,9 +389,34 @@ function normalizePeer(inputPeer, existingPeer) {
     return out;
   };
   const peer = { ...defaults, ...strip(existingPeer), ...strip(inputPeer) };
+
+  // Which receiver, and who decided. Reads the same field name from the
+  // session and from config.json, so either source can carry the choice.
+  let selection = peer.selection === 'manual' ? 'manual' : 'auto';
+
+  const inputUrl = (inputPeer && String(inputPeer.url || '').trim()) || '';
+  if (inputUrl && !isKnownReceiver(inputUrl)) {
+    // Somebody typed a server of their own. That is a deliberate choice and
+    // must not be swept aside by automatic selection.
+    selection = 'manual';
+  } else if (existingPeer && existingPeer.selection === 'manual' && inputUrl) {
+    // Keep the pin. The login screen ALWAYS sends a url (usually the stored
+    // default), so without this every re-login would silently un-pin a
+    // manually chosen receiver.
+    peer.url = existingPeer.url;
+  }
+
+  const url = selection === 'auto' ? ROUTER1 : canonicalPeerUrl(peer.url);
+  // Automatic always uses the fixed order, whatever an older build left in the
+  // session — which is also what migrates installs that stored the wrong
+  // scheme for a receiver.
+  const fallbackUrls = selection === 'auto' ? [ROUTER2] : [];
+
   return {
     name: peer.name,
-    url: peer.url,
+    url,
+    fallbackUrls,
+    selection,
     username: peer.username,
     password: peer.password,
     compression: peer.compression || 'gzip',
@@ -481,6 +562,10 @@ async function bootstrapSender({ labId, orgId, peer, apiUrl }) {
     compression: peer.compression || 'gzip',
     ca_cert_path: peer.caCertPath || '',
     protocol: peer.protocol || 'stow-rs',
+    // The engine reads these to build its candidate list. Manual writes an
+    // empty fallback list so a pin cannot fail over.
+    fallback_urls: peer.selection === 'manual' ? [] : (peer.fallbackUrls || [ROUTER2]),
+    selection: peer.selection === 'manual' ? 'manual' : 'auto',
   };
   cfg.tag_injection = {
     enabled: true,
@@ -545,6 +630,9 @@ async function bootstrapSender({ labId, orgId, peer, apiUrl }) {
   };
   // Backend endpoints follow the server the operator logged into.
   const apiBase = deriveApiBase(apiUrl);
+  // The engine reads this to fail over between the known API hosts. Empty
+  // fallback list for a custom server: it stays the only host we talk to.
+  cfg.api = { base_url: apiBase, fallback_base_urls: apiFallbackBases(apiBase) };
   // Notifier: pre-register study the instant the first instance arrives.
   // No API key — endpoint is open.
   cfg.notifier = {
@@ -940,6 +1028,36 @@ function registerIPC() {
       cfg.storage = cfg.storage || {};
       cfg.storage.retention_hours = Number(patch.retention_hours);
     }
+    // Receiver choice. peer_selection:'auto' restores automatic failover; a
+    // bare peer_url is a manual pin.
+    let peerUrlChanged = false;
+    if (patch.peer_selection != null || patch.peer_url != null) {
+      const selection = patch.peer_selection === 'auto' ? 'auto' : 'manual';
+      let url = ROUTER1;
+      if (selection === 'manual') {
+        url = canonicalPeerUrl(patch.peer_url);
+        if (!/^https?:\/\/.+/i.test(url)) {
+          throw new Error('peer_url must be an http:// or https:// URL');
+        }
+      }
+      const fallbackUrls = selection === 'auto' ? [ROUTER2] : [];
+
+      cfg.peer = cfg.peer || {};
+      peerUrlChanged = cfg.peer.url !== url
+        || (cfg.peer.selection || 'auto') !== selection
+        || JSON.stringify(cfg.peer.fallback_urls || []) !== JSON.stringify(fallbackUrls);
+      Object.assign(cfg.peer, { url, fallback_urls: fallbackUrls, selection });
+
+      // The session is replayed through normalizePeer on every start, so
+      // writing only config.json would let the next launch silently undo the
+      // operator's choice.
+      const session = readSession();
+      if (session) {
+        session.peer = { ...(session.peer || {}), url, fallbackUrls, selection };
+        writeSession(session);
+      }
+    }
+
     writeConfig(cfg);
     if (bootstrap) {
       bootstrap.stableAgeSeconds = cfg.dicom.stable_age_seconds;
@@ -947,7 +1065,15 @@ function registerIPC() {
       if (patch.dicom_port != null) bootstrap.dicomPort = cfg.dicom.port;
       if (patch.aet != null) bootstrap.aet = cfg.dicom.aet;
     }
-    return { ok: true };
+
+    // The engine copies the receiver list into its watcher and transfer client
+    // ONCE at startup. Without a restart the new choice would show in
+    // /api/status while uploads kept going to the old receiver.
+    if (peerUrlChanged) {
+      restartAttempts = 0; // a deliberate bounce, not a crash: skip the backoff
+      stopSender();        // non-permanent, so the exit handler brings it back
+    }
+    return { ok: true, senderRestarting: peerUrlChanged };
   });
 
   ipcMain.handle('tarang:read-recent-logs', async (_evt, opts = {}) => {

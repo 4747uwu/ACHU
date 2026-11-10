@@ -125,8 +125,23 @@
         <div class="section">
           <h2>PACS Receiver</h2>
           <div class="form-grid">
-            <label>Receiver URL</label>
-            <input type="url" id="cfg-peer-url" placeholder="http://orthanc:8042" />
+            <label>Receiver</label>
+            <div class="peer-picker">
+              <div class="peer-modes" role="group" aria-label="Receiver selection">
+                <button type="button" class="btn peer-mode" data-peer-mode="auto">Automatic</button>
+                <button type="button" class="btn peer-mode" data-peer-mode="router1">Router 1</button>
+                <button type="button" class="btn peer-mode" data-peer-mode="router2">Router 2</button>
+              </div>
+              <ul class="peer-list" id="peer-list">
+                <li class="peer-row">Checking receivers…</li>
+              </ul>
+            </div>
+
+            <label>Custom URL</label>
+            <div class="peer-custom">
+              <input type="url" id="cfg-peer-url" placeholder="https://receiver.example.com" />
+              <button type="button" class="btn" id="peer-use-custom">Use this URL</button>
+            </div>
             <label>Username</label>
             <input type="text" id="cfg-peer-user" placeholder="orthanc" autocomplete="off" />
             <label>Password</label>

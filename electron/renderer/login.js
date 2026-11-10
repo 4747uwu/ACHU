@@ -4,6 +4,49 @@ const DEFAULT_PEER_URL  = 'https://router.achyutrs.com';
 // cryptography — it ships in cleartext inside the renderer bundle.
 const SETTINGS_PASSWORD = '18967';
 
+// Backend API hosts, in preference order. Duplicated from API_HOSTS in
+// electron/main/main.js on purpose: login runs before any config exists and
+// the renderer cannot import from the main process. Keep the two in sync.
+const API_HOSTS = ['pacs.achyutrs.com', 'achyu.xcentic.com'];
+
+// The same login path on every known host, the host actually in apiUrl first
+// when it is one of ours. A custom server is returned untouched and alone —
+// an operator's own backend must never be retried against ours.
+function loginUrlsFor(apiUrl) {
+  let u; try { u = new URL(apiUrl); } catch (_) { return [apiUrl]; }
+  const here = u.hostname.toLowerCase();
+  if (!API_HOSTS.some((h) => h === here)) return [apiUrl];
+  const hosts = [here, ...API_HOSTS.filter((h) => h !== here)];
+  return hosts.map((h) => {
+    const alt = new URL(apiUrl);
+    alt.hostname = h;
+    alt.protocol = 'https:';
+    return alt.toString();
+  });
+}
+
+// POST the login to each known host in turn. Only a host that is down or
+// broken (thrown error, or 5xx) moves us to the next one.
+//
+// A 4xx is NEVER retried: it is an answer, not an outage. Replaying it would
+// send a wrong password to a second host — doubling the failed-attempt count
+// against the account and leaking the credential to one more server — and
+// would report the second host's error for the first host's rejection.
+async function loginFetch(apiUrl, options, fetchImpl) {
+  const doFetch = fetchImpl || fetch;
+  const urls = loginUrlsFor(apiUrl);
+  for (let i = 0; i < urls.length; i++) {
+    const last = i === urls.length - 1;
+    try {
+      const res = await doFetch(urls[i], options);
+      if (res.status >= 500 && !last) continue; // host broken — try the next
+      return res;                               // including every 4xx
+    } catch (err) {
+      if (last) throw err;                      // nowhere left to ask
+    }
+  }
+}
+
 const K_API_URL   = 'tarang_api_url';
 const K_PEER_URL  = 'tarang_peer_url';
 const K_PEER_USER = 'tarang_peer_user';
@@ -47,7 +90,7 @@ async function handleLogin(event) {
   clearErr();
 
   try {
-    const res = await fetch(apiUrl, {
+    const res = await loginFetch(apiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

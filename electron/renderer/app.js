@@ -119,6 +119,152 @@ function init() {
 
   // refreshDicomChip re-renders the chip after the AE title or port is edited
   // in Settings, so the operator sees what they just saved without a restart.
+  // --- Receiver picker ------------------------------------------------------
+  //
+  // Mirrors the constants in electron/main/main.js. Duplicated rather than
+  // shared because the renderer has no access to main's module scope; if a
+  // receiver ever changes, both must change.
+  const PEER_ROUTER1 = 'https://router.achyutrs.com';
+  const PEER_ROUTER2 = 'https://achyurouter.xcentic.com';
+
+  function peerHostOf(url) {
+    try { return new URL(String(url)).hostname.toLowerCase(); } catch (_) { return ''; }
+  }
+
+  // Which of the three buttons (if any) represents the stored config.
+  function peerModeOf(peer) {
+    if (!peer || (peer.selection || 'auto') !== 'manual') return 'auto';
+    const h = peerHostOf(peer.url);
+    if (h === peerHostOf(PEER_ROUTER1)) return 'router1';
+    if (h === peerHostOf(PEER_ROUTER2)) return 'router2';
+    return 'custom';
+  }
+
+  function peerLabelFor(url) {
+    const h = peerHostOf(url);
+    if (h === peerHostOf(PEER_ROUTER1)) return 'Router 1';
+    if (h === peerHostOf(PEER_ROUTER2)) return 'Router 2';
+    return 'Custom';
+  }
+
+  function renderPeerModes(mode) {
+    document.querySelectorAll('.peer-mode').forEach((btn) => {
+      btn.classList.toggle('is-active', btn.dataset.peerMode === mode);
+    });
+  }
+
+  // renderPeerList draws one row per receiver from /api/status.
+  //
+  // Built with DOM nodes, never innerHTML: the error strings come from a
+  // remote server's response and must not be able to inject markup.
+  function renderPeerList(status) {
+    const list = document.getElementById('peer-list');
+    if (!list) return;
+    const peers = (status && status.peers) || [];
+    list.textContent = '';
+
+    if (!peers.length) {
+      const li = document.createElement('li');
+      li.className = 'peer-row';
+      li.textContent = 'No receivers configured.';
+      list.appendChild(li);
+      return;
+    }
+
+    const manual = (status && status.peer_selection) === 'manual';
+    for (const p of peers) {
+      const li = document.createElement('li');
+      li.className = 'peer-row';
+
+      const dot = document.createElement('span');
+      dot.className = 'peer-dot ' + (p.reachable ? 'is-up' : 'is-down');
+      li.appendChild(dot);
+
+      const name = document.createElement('span');
+      name.className = 'peer-name';
+      name.textContent = peerLabelFor(p.url);
+      li.appendChild(name);
+
+      const url = document.createElement('span');
+      url.className = 'peer-url';
+      url.textContent = p.url;
+      li.appendChild(url);
+
+      const state = document.createElement('span');
+      state.className = 'peer-state';
+      // A zero time marshals as 0001-01-01: never probed, not "unreachable".
+      const neverProbed = !p.last_probe || String(p.last_probe).startsWith('0001-01-01');
+      state.textContent = p.reachable ? 'reachable' : (neverProbed ? 'checking…' : 'unreachable');
+      li.appendChild(state);
+
+      if (p.active) {
+        const tag = document.createElement('span');
+        tag.className = 'peer-tag';
+        tag.textContent = manual ? 'pinned' : 'in use';
+        li.appendChild(tag);
+      }
+      if (p.cooling_down) {
+        const tag = document.createElement('span');
+        tag.className = 'peer-tag is-warn';
+        tag.textContent = 'recently failed';
+        li.appendChild(tag);
+      }
+      if (!p.reachable && p.error) {
+        const err = document.createElement('div');
+        err.className = 'peer-error';
+        err.textContent = p.error;
+        li.appendChild(err);
+      }
+      list.appendChild(li);
+    }
+  }
+
+  // applyPeerChoice sends the choice and waits out the engine restart.
+  async function applyPeerChoice(patch, mode) {
+    const buttons = document.querySelectorAll('.peer-mode, #peer-use-custom');
+    buttons.forEach((b) => { b.disabled = true; });
+    try {
+      const res = await window.tarangAPI.updateConfig(patch);
+      renderPeerModes(mode);
+      if (res && res.senderRestarting) {
+        toast('info', 'Restarting the sender…');
+        // The engine reads its receiver list once at startup, so the list is
+        // meaningless until it is back up.
+        setTimeout(() => { refreshConnection(); }, 4000);
+      } else {
+        refreshConnection();
+      }
+    } catch (err) {
+      toast('error', (err && err.message) || 'Could not change the receiver.');
+    } finally {
+      buttons.forEach((b) => { b.disabled = false; });
+    }
+  }
+
+  document.querySelectorAll('.peer-mode').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const mode = btn.dataset.peerMode;
+      if (mode === 'auto') {
+        applyPeerChoice({ peer_selection: 'auto' }, 'auto');
+      } else {
+        const url = mode === 'router1' ? PEER_ROUTER1 : PEER_ROUTER2;
+        applyPeerChoice({ peer_selection: 'manual', peer_url: url }, mode);
+      }
+    });
+  });
+
+  const useCustomBtn = document.getElementById('peer-use-custom');
+  if (useCustomBtn) {
+    useCustomBtn.addEventListener('click', () => {
+      const url = document.getElementById('cfg-peer-url').value.trim();
+      if (!isValidUrl(url)) {
+        toast('error', 'Receiver URL must be a valid http:// or https:// URL.');
+        return;
+      }
+      applyPeerChoice({ peer_selection: 'manual', peer_url: url }, 'custom');
+    });
+  }
+
   function refreshDicomChip(aet, port) {
     if (aet) chipAET = aet;
     if (port) chipPort = port;
@@ -663,7 +809,12 @@ function init() {
 
       // PACS Receiver — show current values, leave password blank.
       const peer = cfg.peer || {};
-      document.getElementById('cfg-peer-url').value  = peer.url      || '';
+      // The URL box is for a CUSTOM receiver only. Prefilling it with a known
+      // receiver is what used to re-pin the peer on every unrelated Save.
+      const mode = peerModeOf(peer);
+      document.getElementById('cfg-peer-url').value =
+        mode === 'custom' ? (peer.url || '') : '';
+      renderPeerModes(mode);
       document.getElementById('cfg-peer-user').value = peer.username  || '';
       document.getElementById('cfg-peer-pass').value = '';
       document.getElementById('cfg-dicom-port').value = cfg.dicom?.port || s.dicom_port || 8899;
@@ -800,15 +951,13 @@ function init() {
 
 
     // Peer settings — only include password if the user typed one.
-    const peerUrl  = document.getElementById('cfg-peer-url').value.trim();
+    //
+    // The receiver URL is deliberately NOT sent from here. It has its own
+    // buttons above; including it meant a prefilled box re-pinned the receiver
+    // on every unrelated save, silently cancelling automatic failover.
     const peerUser = document.getElementById('cfg-peer-user').value.trim();
     const peerPass = document.getElementById('cfg-peer-pass').value;
-    if (peerUrl && !isValidUrl(peerUrl)) {
-      toast('error', 'Receiver URL must be a valid http:// or https:// URL.');
-      return;
-    }
     const peerPatch = {};
-    if (peerUrl)  peerPatch.url      = peerUrl;
     if (peerUser) peerPatch.username = peerUser;
     if (peerPass) peerPatch.password = peerPass;
 
@@ -878,7 +1027,11 @@ function init() {
     try {
       const s = await window.tarang.status();
       document.getElementById('kpi-peer-name').textContent = s.peer_name || '—';
-      document.getElementById('kpi-peer-url').textContent  = s.peer_url || '—';
+      // The receiver actually in use, which in automatic mode is not always
+      // the configured preferred one.
+      document.getElementById('kpi-peer-url').textContent  =
+        s.peer_active_url || s.peer_url || '—';
+      renderPeerList(s);
       document.getElementById('kpi-queue').textContent     = s.queue_depth ?? '—';
       document.getElementById('kpi-uptime').textContent    = humanDuration(s.uptime_s);
       document.getElementById('kpi-version').textContent   = `v${s.version}`;

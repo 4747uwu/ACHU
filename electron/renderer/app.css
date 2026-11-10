@@ -1101,3 +1101,48 @@ table.worklist tbody tr[data-active="true"] td:first-child {
   from { transform: translateY(8px); opacity: 0; }
   to   { transform: translateY(0); opacity: 1; }
 }
+
+/* --- Receiver picker ------------------------------------------------------
+ * Existing tokens only, so dark mode follows without a second definition. */
+.peer-picker { display: flex; flex-direction: column; gap: 8px; }
+
+/* The three modes read as one segmented control. */
+.peer-modes { display: inline-flex; }
+.peer-modes .peer-mode { border-radius: 0; margin-left: -1px; }
+.peer-modes .peer-mode:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
+.peer-modes .peer-mode:last-child  { border-radius: 0 6px 6px 0; }
+.peer-modes .peer-mode.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  position: relative; /* keep the filled edge above its neighbour's border */
+  z-index: 1;
+}
+
+.peer-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.peer-row {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+}
+.peer-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.peer-dot.is-up   { background: var(--pill-delivered-fg); }
+.peer-dot.is-down { background: var(--pill-failed-fg); }
+.peer-name { font-weight: 600; }
+.peer-url  { color: var(--text-mute); font-family: ui-monospace, Consolas, monospace; font-size: 11px; }
+.peer-state { color: var(--text-mute); }
+
+/* Tags are identifiers, not alarms — the warn variant is reserved for the
+ * cooldown, which is the only one that means something went wrong. */
+.peer-tag {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .04em;
+  padding: 1px 6px; border-radius: 4px;
+  color: var(--accent); background: var(--accent-soft); border: 1px solid var(--accent-mid);
+}
+.peer-tag.is-warn { color: var(--pill-failed-fg); background: transparent; border-color: var(--pill-failed-fg); }
+.peer-error { flex-basis: 100%; color: var(--pill-failed-fg); font-size: 11px; }
+
+.peer-custom { display: flex; gap: 8px; align-items: center; }
+.peer-custom input { flex: 1; }

@@ -6,13 +6,11 @@
 package notifier
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -77,6 +75,10 @@ type Notifier struct {
 	// (e.g. .../api/orthanc2/instance-exe-received -> .../api/orthanc2/delivered).
 	DeliveredURL string
 	APIKey       string
+
+	// Failover sends this request to a second backend host when the first
+	// does not answer. Nil is fine — it then behaves exactly as before.
+	Failover *httpx.Failover
 	LabID        string
 	OrgID        string
 
@@ -100,7 +102,7 @@ func New(backendURL, apiKey, labID, orgID string) *Notifier {
 		LabID:        labID,
 		OrgID:        orgID,
 		notified:     make(map[string]struct{}),
-		client:       httpx.NewClient(10 * time.Second),
+		client:       httpx.NewClient(90 * time.Second),
 	}
 	if backendURL == "" {
 		log.L().Warn("NOTIFIER disabled — backend_url is empty in config")
@@ -329,28 +331,16 @@ func (n *Notifier) postJSON(targetURL string, v any) (int, string, error) {
 
 	log.L().Info("NOTIFIER sending payload", "url", targetURL, "json", string(b))
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, targetURL, bytes.NewReader(b))
-	if err != nil {
-		return 0, "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if n.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+n.APIKey)
-	}
-
-	resp, err := n.client.Do(req)
-	if err != nil {
-		return 0, "", err
-	}
-	defer resp.Body.Close()
-
-	rawBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-	respBody := string(rawBody)
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return resp.StatusCode, respBody, fmt.Errorf("backend returned HTTP %d", resp.StatusCode)
-	}
-	return resp.StatusCode, respBody, nil
+	// The signature is unchanged on purpose: the pending-retry queue stores a
+	// URL, so a notification queued against the primary host can still go to
+	// the fallback on a later attempt.
+	res, err := n.Failover.PostJSON(context.Background(), n.client, targetURL, b,
+		func(req *http.Request) {
+			if n.APIKey != "" {
+				req.Header.Set("Authorization", "Bearer "+n.APIKey)
+			}
+		})
+	return res.Status, string(res.Body), err
 }
 
 // ---------------------------------------------------------------------------

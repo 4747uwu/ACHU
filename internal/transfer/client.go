@@ -29,6 +29,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -41,6 +42,7 @@ import (
 	"time"
 
 	"github.com/bharatpacs/tarang-sender/internal/log"
+	"github.com/bharatpacs/tarang-sender/internal/queue"
 	"github.com/bharatpacs/tarang-sender/internal/httpx"
 	"github.com/bharatpacs/tarang-sender/internal/store"
 )
@@ -64,10 +66,51 @@ type instanceFile struct {
 	sopUID string
 }
 
+// ErrInstancesRejected marks a receiver refusing specific instances.
+//
+// That is a problem with the data, not the receiver: failing over would
+// re-upload the whole study to another receiver and be refused there too,
+// while putting a perfectly healthy receiver on cooldown.
+var ErrInstancesRejected = errors.New("instances rejected by receiver")
+
+// PeerChooser picks the receiver for a study and records how it went.
+// Implemented by connectivity.Watcher.
+type PeerChooser interface {
+	ChoosePeer(ctx context.Context) (url string, ok bool)
+	MarkFailed(url string, cause error)
+	IsCoolingDown(url string) bool
+	IsCandidate(url string) bool
+	IsManual() bool
+}
+
+// peerURLKey carries the chosen receiver on the context.
+//
+// On the context and not on the Client because several queue workers push
+// through ONE Client concurrently, possibly to different receivers. A field
+// would race, and the loser would send part of a study to the wrong place.
+type peerURLKey struct{}
+
+func withPeerURL(ctx context.Context, url string) context.Context {
+	return context.WithValue(ctx, peerURLKey{}, url)
+}
+
+func (c *Client) peerURLFrom(ctx context.Context) string {
+	if u, ok := ctx.Value(peerURLKey{}).(string); ok && u != "" {
+		return u
+	}
+	return c.PeerURL
+}
+
 // Client pushes DICOM files to an Orthanc peer.
 type Client struct {
 	// PeerURL is the receiver Orthanc base URL, e.g. "http://206.189.133.52:8042".
+	//
+	// Used as-is when Peers is nil, which keeps single-receiver installs and
+	// every existing test working unchanged.
 	PeerURL string
+
+	// Peers, when set, chooses a receiver per study. See PeerChooser.
+	Peers PeerChooser
 
 	// Username and Password authenticate with the peer. Optional if the
 	// peer doesn't require auth.
@@ -120,6 +163,99 @@ type SeriesProgress struct {
 	Error          string
 }
 
+// receiverForStudy returns the receiver this series must go to, and whether
+// this series' delivered-SOP checkpoint has to be discarded because the study
+// moved.
+//
+// Assignment is per STUDY: these receivers forward to their own local
+// destinations, so a study split across two is incomplete on both.
+func (c *Client) receiverForStudy(ctx context.Context, st *store.Store, ser store.SeriesRecord) (string, bool, error) {
+	if c.Peers == nil || ser.StudyInstanceUID == "" {
+		return c.PeerURL, false, nil
+	}
+
+	study, err := st.GetStudy(ser.StudyInstanceUID)
+	if err != nil {
+		return "", false, fmt.Errorf("get study: %w", err)
+	}
+	prev := study.AssignedPeerURL
+
+	// Stay put unless there is a reason not to: still configured, and (in auto)
+	// not cooling off after failing this study.
+	keep := prev != "" && c.Peers.IsCandidate(prev)
+	if keep && !c.Peers.IsManual() && c.Peers.IsCoolingDown(prev) {
+		keep = false
+	}
+	if keep {
+		return prev, false, nil
+	}
+
+	chosen, reachable := c.Peers.ChoosePeer(ctx)
+	if chosen == "" {
+		return "", false, errors.New("no receiver configured")
+	}
+	if !reachable {
+		// Nothing answered. Moving an assigned study on no information would
+		// re-send it in full to a receiver we cannot reach either. Stay and let
+		// the queue retry; an unassigned study stays unassigned so the next
+		// attempt decides with better information.
+		if prev != "" {
+			return prev, false, nil
+		}
+		return chosen, false, nil
+	}
+	if chosen == prev {
+		return chosen, false, nil
+	}
+
+	stored, swapped, err := st.ClaimStudyPeer(ser.StudyInstanceUID, prev, chosen)
+	if err != nil {
+		return "", false, fmt.Errorf("claim study peer: %w", err)
+	}
+
+	// Anyone whose view of the study predates the move drops this series'
+	// checkpoint: those SOPs are delivered to the OLD receiver.
+	moved := prev != "" && stored != prev
+	if moved && swapped {
+		// Only the caller that actually wrote the move re-queues the siblings.
+		// A second caller doing it too would enqueue every sibling twice.
+		log.L().Warn("study moved to another receiver — re-sending it in full",
+			"study_uid", ser.StudyInstanceUID, "from", prev, "to", stored)
+		c.resendStudy(st, ser.StudyInstanceUID, ser.SeriesInstanceUID)
+	}
+	return stored, moved, nil
+}
+
+// resendStudy re-queues every other series of a study after it moved.
+//
+// The whole study is re-sent, not just what was outstanding: the new receiver
+// has none of it. Safe to repeat — Orthanc keys instances by SOP Instance UID,
+// so an instance that arrives twice is stored once.
+func (c *Client) resendStudy(st *store.Store, studyUID, current string) {
+	all, err := st.ListSeriesByStudy(studyUID)
+	if err != nil {
+		log.L().Warn("resend study: list series", "study_uid", studyUID, "err", err)
+		return
+	}
+	for _, ser := range all {
+		// Every checkpoint in this study belongs to the old receiver.
+		if err := st.ClearDeliveredSOPs(ser.SeriesInstanceUID); err != nil {
+			log.L().Warn("resend study: clear checkpoint", "series_uid", ser.SeriesInstanceUID, "err", err)
+		}
+		// The caller is mid-push, and anything not already delivered is still
+		// queued and will pick the new receiver on its own.
+		if ser.SeriesInstanceUID == current || ser.Status != store.StatusDelivered {
+			continue
+		}
+		if err := queue.EnqueueSeries(st, ser.SeriesInstanceUID); err != nil {
+			log.L().Warn("resend study: enqueue", "series_uid", ser.SeriesInstanceUID, "err", err)
+		}
+	}
+	if err := st.SetStudyStatus(studyUID, store.StatusQueued); err != nil {
+		log.L().Warn("resend study: study status", "study_uid", studyUID, "err", err)
+	}
+}
+
 // PushSeries pushes every instance of a series to the peer, then marks the
 // series Delivered in the store. If the parent study has all its series
 // delivered, the study is also marked Delivered.
@@ -142,6 +278,18 @@ func (c *Client) PushSeries(ctx context.Context, st *store.Store, seriesUID stri
 	}
 	if len(files) == 0 {
 		return fmt.Errorf("no instance files found for series %s", seriesUID)
+	}
+
+	// Which receiver this study goes to. Before the checkpoint filter below:
+	// if the study moved, those delivered SOPs are on the OLD receiver and the
+	// new one needs all of them again.
+	peerURL, moved, err := c.receiverForStudy(ctx, st, ser)
+	if err != nil {
+		return err
+	}
+	ctx = withPeerURL(ctx, peerURL)
+	if moved {
+		ser.DeliveredSOPs = nil
 	}
 
 	// Instance checkpointing: skip SOPs already confirmed delivered in a
@@ -204,6 +352,8 @@ func (c *Client) PushSeries(ctx context.Context, st *store.Store, seriesUID stri
 		"instances", len(files),
 		"modality", ser.Modality,
 		"protocol", c.protocol(),
+		// The only way to tell from a field log WHERE a study went.
+		"peer", peerURL,
 	)
 
 	progressFn := func(bytesSent int64, instancesSent int) {
@@ -230,6 +380,13 @@ func (c *Client) PushSeries(ctx context.Context, st *store.Store, seriesUID stri
 	}
 
 	if err := c.pushFiles(ctx, files, progressFn, onChunkDelivered); err != nil {
+		// Pass this receiver over for a while, so the queue's next attempt
+		// tries another one. Two things are deliberately NOT failures of the
+		// receiver: instances it refused (a data problem, which would be
+		// refused again elsewhere) and our own shutdown or cancellation.
+		if c.Peers != nil && ctx.Err() == nil && !errors.Is(err, ErrInstancesRejected) {
+			c.Peers.MarkFailed(peerURL, err)
+		}
 		c.emit(SeriesProgress{
 			SeriesUID:      seriesUID,
 			StudyUID:       ser.StudyInstanceUID,
@@ -321,7 +478,7 @@ func (c *Client) postInstance(ctx context.Context, path string) error {
 		return fmt.Errorf("read file: %w", err)
 	}
 
-	url := strings.TrimRight(c.PeerURL, "/") + "/instances"
+	url := strings.TrimRight(c.peerURLFrom(ctx), "/") + "/instances"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return err
@@ -670,7 +827,7 @@ func (c *Client) stowChunk(ctx context.Context, files []instanceFile, onProgress
 		pw.CloseWithError(streamErr)
 	}()
 
-	url := strings.TrimRight(c.PeerURL, "/") + "/dicom-web/studies"
+	url := strings.TrimRight(c.peerURLFrom(ctx), "/") + "/dicom-web/studies"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, pr)
 	if err != nil {
 		return err
@@ -700,7 +857,8 @@ func (c *Client) stowChunk(ctx context.Context, files []instanceFile, onProgress
 	}
 	if retriesLeft <= 0 {
 		log.L().Error("stow-rs: instances rejected after retries", "count", len(failedUIDs))
-		return fmt.Errorf("stow-rs: %d instance(s) rejected by peer after retries", len(failedUIDs))
+		return fmt.Errorf("stow-rs: %d instance(s) rejected by peer after retries: %w",
+			len(failedUIDs), ErrInstancesRejected)
 	}
 	// Build retry slice from the failed UIDs.
 	sopMap := make(map[string]instanceFile, len(files))

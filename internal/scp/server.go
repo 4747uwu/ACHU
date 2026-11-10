@@ -298,7 +298,21 @@ func (s *Server) handleConnection(ctx context.Context, conn net.Conn) {
 		ctxByID[pc.ID] = pc
 		ts := pickPreferredTransferSyntax(pc.TransferSyntaxes)
 		if ts == "" {
-			// transfer-syntaxes-not-supported (4)
+			// transfer-syntaxes-not-supported (4).
+			//
+			// Logged loudly because the alternative is invisible: the
+			// association is still ACCEPTED, the modality gets "no" for this
+			// context and quietly gives up, and the log shows nothing but an
+			// accept followed immediately by a release — identical to a
+			// healthy C-ECHO. A site chasing "images are not arriving" has no
+			// way to tell those apart. Naming the syntax it offered turns a
+			// debugging session into one line.
+			log.L().Warn("scp presentation context REFUSED — unsupported transfer syntax",
+				"remote", remote,
+				"sop_class", pc.AbstractSyntax,
+				"offered", pc.TransferSyntaxes,
+				"supported", SupportedTransferSyntaxes,
+			)
 			acDecisions = append(acDecisions, presContextAC{
 				ID:             pc.ID,
 				Result:         4,

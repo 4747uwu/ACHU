@@ -66,6 +66,14 @@ type StudyRecord struct {
 	LastInstanceAt    time.Time `json:"last_instance_at"`
 	Status            string    `json:"status"`
 	DeliveredAt       *time.Time `json:"delivered_at,omitempty"`
+
+	// AssignedPeerURL is the receiver this study was sent to.
+	//
+	// Assignment is per STUDY, not per series: the receivers do not share a
+	// destination, so a study split across two is incomplete on both. Empty
+	// until the first series is pushed. Persisted so a restart does not
+	// re-decide and split a study that was already half delivered.
+	AssignedPeerURL string `json:"assigned_peer_url,omitempty"`
 }
 
 // QueueEntry represents a unit of work waiting to be transferred.

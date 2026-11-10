@@ -195,9 +195,21 @@ func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	peerOnline := true
 	peerError := ""
 	peerLastOK := ""
+	peerActiveURL := s.PeerURL
+	peerSelection := "auto"
+	peers := []connectivity.PeerStatus{}
 	if s.PeerWatcher != nil {
 		peerOnline = s.PeerWatcher.IsOnline()
 		peerError = s.PeerWatcher.LastError()
+		if u := s.PeerWatcher.ActivePeer(); u != "" {
+			peerActiveURL = u
+		}
+		if s.PeerWatcher.IsManual() {
+			peerSelection = "manual"
+		}
+		if ps := s.PeerWatcher.Peers(); len(ps) > 0 {
+			peers = ps
+		}
 		if t := s.PeerWatcher.LastProbe(); !t.IsZero() {
 			peerLastOK = t.UTC().Format(time.RFC3339)
 		}
@@ -207,6 +219,12 @@ func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 		"peer_online":       peerOnline,
 		"peer_error":        peerError,
 		"peer_last_success": peerLastOK,
+		// Multi-receiver: which one is in use, how it was chosen, and the
+		// state of every candidate. peer_url stays the CONFIGURED preferred
+		// receiver so existing callers keep their meaning.
+		"peer_active_url": peerActiveURL,
+		"peer_selection":  peerSelection,
+		"peers":           peers,
 		"lab_active":            labActive,
 		"lab_status":            labStatus,
 		"lab_status_message":    labMessage,

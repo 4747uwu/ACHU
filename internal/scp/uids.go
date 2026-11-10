@@ -19,12 +19,22 @@ const (
 	UIDDeflatedExplicitVRLittleEnd = "1.2.840.10008.1.2.1.99"
 	UIDJPEGBaseline                = "1.2.840.10008.1.2.4.50"
 	UIDJPEGExtended                = "1.2.840.10008.1.2.4.51"
+	UIDJPEGLosslessNonHier         = "1.2.840.10008.1.2.4.57"
 	UIDJPEGLossless                = "1.2.840.10008.1.2.4.70"
 	UIDJPEGLSLossless              = "1.2.840.10008.1.2.4.80"
 	UIDJPEGLSLossy                 = "1.2.840.10008.1.2.4.81"
 	UIDJPEG2000Lossless            = "1.2.840.10008.1.2.4.90"
 	UIDJPEG2000                    = "1.2.840.10008.1.2.4.91"
 	UIDRLELossless                 = "1.2.840.10008.1.2.5"
+	UIDJPEG2000Part2Lossless       = "1.2.840.10008.1.2.4.92"
+	UIDJPEG2000Part2               = "1.2.840.10008.1.2.4.93"
+	UIDEncapsulatedUncompressed    = "1.2.840.10008.1.2.1.98"
+	// Video. Ultrasound cine loops and endoscopy arrive in these, and a
+	// modality that only offers one of them is refused outright without them.
+	UIDMPEG2MainLevel              = "1.2.840.10008.1.2.4.100"
+	UIDMPEG2HighLevel              = "1.2.840.10008.1.2.4.101"
+	UIDMPEG4AVCHighProfile         = "1.2.840.10008.1.2.4.102"
+	UIDMPEG4AVCBDCompatible        = "1.2.840.10008.1.2.4.103"
 
 	UIDApplicationContext     = "1.2.840.10008.3.1.1.1"
 	UIDImplementationClassTAR = "1.2.826.0.1.3680043.10.1338.1" // ours; pick a real OID for production
@@ -48,6 +58,20 @@ var SupportedTransferSyntaxes = []string{
 	UIDJPEG2000Lossless,
 	UIDJPEG2000,
 	UIDRLELossless,
+
+	// Added after a site showed associations being accepted and released with
+	// nothing transferred: a context whose transfer syntax we do not list is
+	// refused, and the modality simply gives up. Everything here passes
+	// through as opaque bytes — the SCP stores and forwards, it does not
+	// transcode — so listing one costs nothing and refusing one costs a study.
+	UIDJPEGLosslessNonHier,
+	UIDJPEG2000Part2Lossless,
+	UIDJPEG2000Part2,
+	UIDEncapsulatedUncompressed,
+	UIDMPEG2MainLevel,
+	UIDMPEG2HighLevel,
+	UIDMPEG4AVCHighProfile,
+	UIDMPEG4AVCBDCompatible,
 }
 
 // isSupportedTransferSyntax reports whether ts is in our accepted list.

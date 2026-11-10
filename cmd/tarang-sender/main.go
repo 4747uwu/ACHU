@@ -35,6 +35,7 @@ import (
 	"github.com/bharatpacs/tarang-sender/internal/config"
 	"github.com/bharatpacs/tarang-sender/internal/connectivity"
 	"github.com/bharatpacs/tarang-sender/internal/errorreport"
+	"github.com/bharatpacs/tarang-sender/internal/httpx"
 	"github.com/bharatpacs/tarang-sender/internal/labstatus"
 	"github.com/bharatpacs/tarang-sender/internal/log"
 	"github.com/bharatpacs/tarang-sender/internal/notifier"
@@ -199,6 +200,20 @@ func run() error {
 		return labChecker.Allowed(context.Background(), "notify")
 	}
 
+	// ---- Backend API failover --------------------------------------------
+	// ONE Failover shared by all three callers, so the cooldown is shared too:
+	// if the notifier finds the primary host down, the activation gate's next
+	// check goes straight to the fallback instead of re-discovering it.
+	apiFailover := httpx.NewFailover(cfg.API.BaseURL, cfg.API.FallbackBaseURLs...)
+	if apiFailover != nil {
+		studyNotifier.Failover = apiFailover
+		labChecker.Failover = apiFailover
+		if errReporter != nil {
+			errReporter.SetFailover(apiFailover)
+		}
+		logger.Info("backend API hosts configured", "bases", apiFailover.Bases())
+	}
+
 	// ---- Persistent store -----------------------------------------------
 	dbPath := filepath.Join(cfg.Storage.DataDir, "tarang.db")
 	st, err := store.Open(dbPath)
@@ -303,9 +318,17 @@ func run() error {
 	// ---- Connectivity watchdog ------------------------------------------
 	connWatcher := &connectivity.Watcher{
 		PeerURL:  cfg.Peer.URL,
+		URLs:     cfg.Peer.Candidates(),
+		Manual:   cfg.Peer.IsManual(),
 		Username: cfg.Peer.Username,
 		Password: cfg.Peer.Password,
 	}
+	// The transfer client asks the watcher which receiver each study goes to.
+	transferClient.Peers = connWatcher
+	logger.Info("receivers configured",
+		"selection", map[bool]string{true: "manual", false: "auto"}[cfg.Peer.IsManual()],
+		"candidates", cfg.Peer.Candidates(),
+	)
 
 	// ---- Queue worker (M3) ----------------------------------------------
 	// Cap concurrent transcodings so CPU-bound gdcmconv work doesn't starve

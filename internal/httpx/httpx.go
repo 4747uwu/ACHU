@@ -62,7 +62,7 @@ const (
 	nsDialTimeout = 3 * time.Second
 
 	// connectTimeout bounds one TCP connection attempt to a resolved address.
-	connectTimeout = 10 * time.Second
+	connectTimeout = 20 * time.Second
 
 	// warnInterval rate-limits resolver-fallback warnings. A site with broken
 	// DNS makes this happen on every request, and the log file is itself
@@ -400,7 +400,12 @@ func NewTransport() *http.Transport {
 		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          100,
 		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
+		// 60s, raised from 10s for Windows 7 sites on slow clinic links, where a
+		// handshake that completes in 12-20s was being cut off and every backend
+		// call failed with "TLS handshake timeout". Every client built on this
+		// transport must allow MORE than this overall, or the request budget
+		// expires first and this number never gets a chance to matter.
+		TLSHandshakeTimeout:   60 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 	}
 }
